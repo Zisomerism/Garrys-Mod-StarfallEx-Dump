@@ -1,0 +1,36 @@
+--@name crossbow meme
+--@author desu
+--@server
+
+local hasCB = 0
+
+local function newCB()
+    owner():stripWeapon("weapon_crossbow")
+    concmd("gm_giveswep weapon_crossbow")
+end
+
+hook.add("PlayerSwitchWeapon", "switchhook", function(ply, oldWep, newWep)
+    if ply == owner() then
+        if newWep:getClass() == "weapon_crossbow" then
+            hasCB = 1
+        elseif newWep:getClass() != "weapon_crossbow" then
+            hasCB = 0
+        end
+    end
+end)
+
+hook.add("OnEntityCreated", "enthook", function(ent)
+    if hasCB == 1 then
+        if ent then
+            if ent:isValid() then
+                if ent:getClass() == "crossbow_bolt" then
+                    newCB()
+                end
+            end
+        end
+    end
+end)
+
+
+
+

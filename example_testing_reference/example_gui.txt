@@ -1,0 +1,93 @@
+--@name gui example
+--@author desu
+--@client
+--@owneronly
+
+if player() == owner() then enableHud(owner(), true) end
+
+local menuKey = KEY.I
+local menuBG = Color(0,0,0,200)
+local buttonBG = Color(255,60,0,200)
+local textColor = Color(200,200,200,255)
+local x, y = render.getGameResolution()
+local midX, midY = x / 2, y / 2
+local offset = {x = -100, y = 25}
+local cursor = false
+local mouseClicked = false
+local lineSpacing = 25
+local menuX = midX
+local menuWidth = x/10
+local buttonD = {w = menuWidth/2, h = 20}
+local buttonX = menuX+buttonD.w/2
+local buttonTable = {}
+local font = render.createFont('FontAwesome', 18, 800, false, false, true, true, 0, false, 0)
+render.setFont(font)        
+        
+local function isWithin(value, lower, upper)
+    if upper < lower then
+        local lowerTemp = upper
+        upper = lower
+        lower = lowerTemp
+    end
+    if value > lower and value < upper then
+        return true
+    else
+        return false
+    end
+end
+
+local function addButton(text, func)
+    if isfunction(func) then
+        
+    else
+        
+    end
+    if !table.hasValue(buttonTable, text) then
+        table.insert(buttonTable, text)
+    end
+end
+
+
+addButton("test")
+addButton("test2")
+addButton("test3")
+addButton("test4")
+
+hook.add("drawhud","",function()
+    if input.isKeyDown(menuKey) then 
+        if menuKey != KEY.C then
+            if !cursor then
+                input.enableCursor(true)
+                cursor = true 
+            end 
+        end         
+        render.setColor(menuBG)
+        render.drawRect(menuX+offset.x,offset.y+15,menuWidth,12+lineSpacing*#buttonTable)
+        for k, text in pairs(buttonTable) do
+            render.setColor(buttonBG)
+            render.drawRect(buttonX+offset.x, offset.y+k*lineSpacing, buttonD.w, buttonD.h)
+            render.setColor(textColor)
+            render.drawSimpleText(buttonX+offset.x+10, offset.y+k*lineSpacing, text)
+        end
+        if input.isMouseDown(MOUSE.LEFT) then
+            if !mouseClicked then
+                mouseClicked = true
+                local cursorX, cursorY = input.getCursorPos()
+                for k, v in pairs(buttonTable) do
+                    if isWithin(cursorX, buttonX+offset.x, buttonX+offset.x+buttonD.w) and isWithin(cursorY, offset.y+k*lineSpacing, offset.y+k*lineSpacing+buttonD.h) then
+                        print(v) -- Do stuff here
+                    end
+                end
+            end
+        else
+            mouseClicked = false
+        end
+        else
+            if menuKey != KEY.C then
+                if cursor then
+                    input.enableCursor(false)
+                    cursor = false
+                end
+            end 
+        end
+end)

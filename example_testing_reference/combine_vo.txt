@@ -1,0 +1,75 @@
+--@name Combine_VO
+--@author desu
+--@server
+
+if SERVER then
+
+    local radioOnSnd = "NPC_MetroPolice.Radio.On"
+    local radioOffSnd = "NPC_MetroPolice.Radio.Off"    
+    local lastContactTime = 0
+
+    local function transmit(snd)
+        chip():emitSound(radioOnSnd)
+        timer.create("radioOn", 0.25, 1, function()
+            chip():emitSound(snd)    
+            timer.create("radioOff", sound.duration(snd), 1, function()
+                chip():emitSound(radioOffSnd) 
+                timer.remove("radioOn")
+                timer.remove("radioOff")
+            end)
+        end)
+    end
+    
+    hook.add("PlayerSwitchWeapon", "switchhook", function(ply, oldWep, newWep)
+        if ply==owner() then
+            if newWep:getClass() == "weapon_stunstick" then
+                local snd, key = table.random({"npc/metropolice/vo/prepareforjudgement.wav","npc/metropolice/vo/loyaltycheckfailure.wav","npc/metropolice/vo/finalwarning.wav"})
+                transmit(snd)
+            end
+        end
+    end)
+
+    hook.add("PlayerHurt", "switchhook", function(ply, att, newHP, dmg)
+        if ply==owner() and lastContactTime + 5 < timer.curtime() then
+            if att ~= ply and dmg > 5 then
+                local snd, key = table.random({"npc/combine_soldier/vo/contact.wav","npc/combine_soldier/vo/contactconfim.wav"})
+                transmit(snd)
+                lastContactTime = timer.curtime()
+            end
+        end
+    end)
+end
+--NPC_MetroPolice.Cupcop.Failure
+--------------
+--npc/combine_soldier/vo/teamdeployedandscanning.wav
+
+--npc/combine_soldier/vo/weaponsoffsafeprepforcontact.wav
+
+--npc/combine_soldier/vo/affirmative.wav
+--npc/combine_soldier/vo/affirmative2.wav
+
+--npc/combine_soldier/vo/goactiveintercept.wav
+
+--npc/combine_soldier/vo/prepforcontact.wav
+--npc/combine_soldier/vo/readyweapons.wav
+--npc/combine_soldier/vo/readyweaponshostilesinbound.wav
+
+--npc/combine_soldier/vo/overwatchreportspossiblehostiles.wav
+--npc/combine_soldier/vo/overwatchrequestreinforcement.wav
+--npc/combine_soldier/vo/overwatchteamisdown.wav
+
+--npc/combine_soldier/vo/contact.wav
+--npc/combine_soldier/vo/contactconfim.wav
+--npc/combine_soldier/vo/contactconfirmprosecuting.wav
+
+--npc/combine_soldier/vo/engaging.wav
+
+--npc/combine_soldier/vo/copythat.wav
+
+--npc/combine_soldier/vo/cover.wav
+
+--npc/combine_soldier/vo/suppressing.wav
+
+--npc/combine_soldier/vo/coverme.wav
+
+--npc/combine_soldier/vo/onedown.wav

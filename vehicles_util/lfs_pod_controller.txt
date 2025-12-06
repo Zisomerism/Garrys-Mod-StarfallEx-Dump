@@ -1,0 +1,28 @@
+--@name LFS Pod Controller
+--@author desu
+--@server
+
+if SERVER then
+    
+    local function createPodController(vehicle)
+        local pod = prop.createSent(chip():getPos(), chip():getAngles(), "gmod_wire_pod", false, {["Model"] = "models/jaanus/wiretool/wiretool_range.mdl"})
+        constraint.weld(pod, chip():isWeldedTo(), 0, 0, 0, true)
+        local names, t = wire.getInputs( vehicle )
+        printTable( t )
+        wire.create(pod, vehicle, "Vehicle", "entity", 0)
+    end
+    
+    local function findSeat()
+        local cEnts = chip():isWeldedTo():getAllConstrained() --a table of everything that makes up the vehicle
+        local entIndexOrdered = {}
+        for k,v in pairs(cEnts) do
+            if v:getClass() == "prop_vehicle_prisoner_pod" then --we want just the vehicles
+                print(v)
+                entIndexOrdered[v:entIndex()] = v --reorganizing into a table with ent indicies as the keys
+            end
+        end
+        return (entIndexOrdered[math.min(unpack(table.getKeys(entIndexOrdered)))])  --finding the lowest ent index
+    end
+
+    createPodController(findSeat()) 
+end

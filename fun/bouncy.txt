@@ -12,14 +12,17 @@ if SERVER then
         Color(255, 255, 76),
         Color(51, 76, 255),}
     local bounceEnt = chip():isWeldedTo()
-    if bounceEnt:getMass() < 25 then bounceEnt:setMass(25) end
+    --if bounceEnt:getMass() < 25 then bounceEnt:setMass(25) end
+    bounceEnt:setMass(100)
     bounceEnt:setMaterial("models/debug/debugwhite")
     bounceEnt:setPhysMaterial("metal_bouncy")
     bounceEnt:setColor(table.random(colTbl))
     bounceEnt:addCollisionListener(function(data)
         if ( data.Speed > 60 && data.DeltaTime > 0.2 ) then
+            
             local pitch = 32 + 128 - math.clamp( bounceEnt:getMass(), 10, 500 )
             bounceEnt:emitSound("garrysmod/balloon_pop_cute.wav", 75, math.random( pitch - 10, pitch + 10 ),  math.clamp( data.Speed / 150, 0, 1 ))
+        
         end
         
         bounceEnt:setColor(table.random(colTbl))

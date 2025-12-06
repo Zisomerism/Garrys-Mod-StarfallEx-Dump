@@ -1,0 +1,153 @@
+--@name example gui teleport
+--@author desu
+--@shared
+--@owneronly
+
+if SERVER then
+    
+    local function TPtoPlayer(ply)
+        if owner():isInPVE() then
+            if ply:isInPVE() then
+                print("Teleporting to "..ply:getName())
+                local seat = prop.createSeat(ply:getPos()+Vector(0,0,100),ply:worldToLocalAngles(ply:getEyeAngles()),"models/nova/airboat_seat.mdl", true)
+                seat:use()
+                seat:remove()
+            else
+                print("Target player is in PVP! Cannot teleport to PVP players.")
+            end
+        else
+            print("You must be in PVE to teleport!")
+        end
+    end
+        
+    hook.add("PlayerInitialSpawn", "plyC",function(ply, t)
+        net.start("handlePlayerConnections")
+        net.writeBool(true)
+        net.writeEntity(ply)
+        net.send()
+    end)
+    
+    hook.add("PlayerDisconnected", "plyDC",function(ply)
+        net.start("handlePlayerConnections")
+        net.writeBool(false)
+        net.writeEntity(ply)
+        net.send()                  
+    end)
+    
+    hook.add("net","handleTP",function(n, l, p)
+        local ply = net.readEntity()
+        TPtoPlayer(ply)
+    end)
+    
+else
+
+    if player() == owner() then enableHud(owner(), true) end
+    local menuKey = KEY.I
+    local menuBG = Color(0,0,0,200)
+    local buttonBGPVP = Color(255,5,0)
+    local buttonBGPVE = Color(5,255,0)
+    local textColor = Color(200,200,200,255)
+    local x, y = render.getGameResolution()
+    local midX, midY = x / 2, y / 2
+    local offset = {x = -400, y = 25}
+    local cursor = false
+    local mouseClicked = false
+    local lineSpacing = 25
+    local menuX = midX
+    local menuWidth = x/3
+    local buttonD = {w = menuWidth/2, h = 20}
+    local buttonX = menuX+buttonD.w/2
+    local buttonTable = {}
+    local font = render.createFont('FontAwesome', 18, 800, false, false, true, true, 0, false, 0)
+    render.setFont(font)         
+            
+    local function isWithin(value, lower, upper)
+        if upper < lower then
+            local lowerTemp = upper
+            upper = lower
+            lower = lowerTemp
+        end
+        if value > lower and value < upper then
+            return true
+        else
+            return false
+        end
+    end
+    
+    local function addButton(text)
+        if !table.hasValue(buttonTable, text) then
+            table.insert(buttonTable, text)
+        end
+    end
+    
+    local function removeButton(text)
+        if table.hasValue(buttonTable, text) then
+            table.removeByValue(buttonTable, text)
+        end
+    end
+    
+    local playersTemp = find.allPlayers()
+    for k, ply in pairs(playersTemp) do
+        if ply:isValid() then
+            addButton(ply)
+        end
+    end
+    
+    hook.add("net","handlePlayerConnections",function(n, l, p)
+        local isConnected = net.readBool()
+        local ply = net.readEntity()
+        if isConnected then
+            addButton(ply)
+        else
+            removeButton(ply)
+        end
+    end)
+    
+    hook.add("drawhud","",function()
+        if input.isKeyDown(menuKey) then 
+            if menuKey != KEY.C then
+                if !cursor then
+                    input.enableCursor(true)
+                    cursor = true 
+                end 
+            end   
+            render.setColor(menuBG)
+            render.drawRect(menuX+offset.x,offset.y+15,menuWidth,12+lineSpacing*#buttonTable)
+            for k, v in pairs(buttonTable) do
+                if v:isValid() then
+                    if v:isInPVE() then 
+                        render.setColor(buttonBGPVE)
+                    else
+                        render.setColor(buttonBGPVP)
+                    end
+                    render.drawRect(buttonX+offset.x, offset.y+k*lineSpacing, buttonD.w, buttonD.h)
+                    render.setColor(textColor)
+                    render.drawSimpleText(buttonX+offset.x+10, offset.y+k*lineSpacing, v:getName())
+                end
+            end
+            if input.isMouseDown(MOUSE.LEFT) then
+                if !mouseClicked then
+                    mouseClicked = true
+                    local cursorX, cursorY = input.getCursorPos()
+                    for k, v in pairs(buttonTable) do
+                        if isWithin(cursorX, buttonX+offset.x, buttonX+offset.x+buttonD.w) and isWithin(cursorY, offset.y+k*lineSpacing, offset.y+k*lineSpacing+buttonD.h) then
+                            net.start("handleTP")
+                            net.writeEntity(v)
+                            net.send()
+                        end
+                    end
+                end
+            else
+                mouseClicked = false
+            end
+        else
+            if menuKey != KEY.C then
+                if cursor then
+                    input.enableCursor(false)
+                    cursor = false
+                end
+            end 
+        end
+    end)
+
+end

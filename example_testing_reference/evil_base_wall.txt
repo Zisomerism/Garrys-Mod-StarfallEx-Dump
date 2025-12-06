@@ -1,0 +1,19 @@
+--@name test/evil_base_window
+--@author desu
+--@server
+
+local ent = chip():isWeldedTo()
+local colFull, colHalf = Color( 255, 255, 255, 255 ), Color( 255, 255, 255, 125 )
+
+hook.add( "EntityTakeDamage", "EvilWindow", function( tar, attacker )
+    if tar == ent then
+        if attacker == owner() then
+            tar:setCollisionGroup( 12 )
+            timer.create( "reset", 0.1, 1, function()
+                tar:setCollisionGroup( 0 )
+            end )
+        else
+            tar:setCollisionGroup( 0 )
+        end
+    end
+end)
