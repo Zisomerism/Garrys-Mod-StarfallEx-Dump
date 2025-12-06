@@ -1,0 +1,18 @@
+--@name I can see my house from here
+--@author desu
+--@client
+--@owneronly
+
+if player() == owner() then enableHud(owner(), true) end
+
+hook.add("CalcView", "farzmeme", function(pos, angles, fov, znear, zfar)
+    return {fov = 100, zfar = 100000}
+
+end)
+
+local function noFog()       
+    render.setFogMode(0)
+end
+
+hook.add("SetupWorldFog", "", noFog)
+hook.add("SetupSkyboxFog", "", noFog)

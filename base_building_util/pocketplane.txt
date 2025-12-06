@@ -1,0 +1,21 @@
+--@name PocketPlane
+--@author desu
+--@server
+
+local scaleVec = Vector( 2, 2, 2 )
+local zOffset = 0
+local boxMdl = "models/hunter/blocks/cube8x8x8.mdl"
+local boxMat = "shadertest/cubemap" --"Models/effects/vol_light001" if you wanna see out :D
+local rotOffset = Angle( 0, 0, 0 )
+
+local chip = chip()
+local baseEnt = chip:isWeldedTo()
+if not isValid( baseEnt ) then error( "MUST BE PLACED ON A PROP", 0 ) return end
+local pos = baseEnt:getPos() + Vector( 0, 0, zOffset )
+local skySph = hologram.create( pos, baseEnt:getAngles() + rotOffset, boxMdl, scaleVec)
+local obscureSph = hologram.create( pos, baseEnt:getAngles() + rotOffset, boxMdl, scaleVec + Vector( 0.1, 0.1, 0.1 ) )
+skySph:setMaterial( boxMat )
+skySph:setCullMode( 1 )
+skySph:suppressEngineLighting( true )
+skySph:setRenderGroup( RENDERGROUP.BOTH )
+obscureSph:setMaterial( "engine/writez" )

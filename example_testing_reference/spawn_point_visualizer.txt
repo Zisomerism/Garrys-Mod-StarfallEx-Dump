@@ -1,0 +1,10 @@
+--@name spawn point visualizer
+--@author desu
+--@server
+    
+local spawns = find.byClass("info_player_*")
+
+for i=1,#spawns,1 do
+    print(spawns[i])
+    hologram.create(spawns[i]:getPos(), spawns[i]:getAngles(), "models/editor/playerstart.mdl")
+end

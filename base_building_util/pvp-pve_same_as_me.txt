@@ -1,0 +1,13 @@
+--@name PVP-PVE same as me
+--@author desu
+--@server
+
+local ent = chip():isWeldedTo()
+ent:addCollisionListener(function(data)
+    local hitEnt = data.HitEntity
+    if hitEnt:isPlayer() and hitEnt:isInPVP() == owner():isInPVP() then
+        ent:setCollisionGroup(18)
+    else
+        ent:setCollisionGroup(0)
+    end
+end)

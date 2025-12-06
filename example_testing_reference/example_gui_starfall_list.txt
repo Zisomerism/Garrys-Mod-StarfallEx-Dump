@@ -1,0 +1,95 @@
+--@name starfall list example gui
+--@author desu
+--@client
+--@owneronly
+
+if player() == owner() then enableHud(owner(), true) end
+
+local menuBG = Color(0,0,0,200)
+local buttonBG = Color(255,60,0,200)
+local textColor = Color(200,200,200,255)
+local x, y = render.getGameResolution()
+local midX, midY = x / 2, y / 2
+local offset = {x = 0, y = 15}
+local cursor = false
+local mouseClicked = false
+local lineSpacing = 25
+local menuX = midX-x/8
+local menuWidth = x/4
+local buttonD = {w = menuWidth/4, h = 20}
+local buttonX = menuX+menuX/10
+local buttonTable = {}
+local font = render.createFont('FontAwesome', 18, 800, false, false, true, true, 0, false, 0)
+render.setFont(font)        
+        
+local function isWithin(value, lower, upper)
+    if upper < lower then
+        local lowerTemp = upper
+        upper = lower
+        lower = lowerTemp
+    end
+    if value > lower and value < upper then
+        return true
+    else
+        return false
+    end
+end
+
+local function addButton(text)
+    if !table.hasValue(buttonTable, text) then
+        table.insert(buttonTable, text)
+    end
+end
+
+local function removeButton(text)
+    if table.hasValue(buttonTable, text) then
+        table.removeByValue(buttonTable, text)
+    end
+end
+
+local starfallTemp = {}
+timer.create("entScan",1,0,function()
+    starfallTemp = find.byClass( "starfall_processor" )
+end)
+
+timer.create("buttonManager",1,0,function()
+    for k, sf in pairs(starfallTemp) do
+        addButton(sf)
+    end
+end)
+
+
+hook.add("drawhud","",function()
+    if input.isKeyDown(KEY.K) then 
+        if !cursor then
+            input.enableCursor(true)
+            cursor = true 
+        end          
+        render.setColor(menuBG)
+        render.drawRect(menuX,offset.y,menuWidth,12+lineSpacing*#buttonTable)
+        for k, text in pairs(buttonTable) do
+            render.setColor(buttonBG)
+            render.drawRect(buttonX, k*lineSpacing, buttonD.w, buttonD.h)
+            render.setColor(textColor)
+            render.drawSimpleText(buttonX+10, k*lineSpacing, text:getChipName())
+        end
+        if input.isMouseDown(MOUSE.LEFT) then
+            if !mouseClicked then
+                mouseClicked = true
+                local cursorX, cursorY = input.getCursorPos()
+                for k, v in pairs(buttonTable) do
+                    if isWithin(cursorX, buttonX, (buttonX)+buttonD.w) and isWithin(cursorY, k*lineSpacing, k*lineSpacing+buttonD.h) then
+                        printTable(getScripts(v))
+                    end
+                end
+            end
+        else
+            mouseClicked = false
+        end
+    else
+        if cursor then
+            input.enableCursor(false)
+            cursor = false
+        end 
+    end
+end)

@@ -1,0 +1,9 @@
+--@name Bright fog hurts my eyes
+--@author desu
+--@client
+--@owneronly
+
+if player() == owner() then enableHud(owner(), true) end
+
+hook.add("SetupWorldFog", "", function() render.setFogMode(0) end)
+hook.add("SetupSkyboxFog", "", function() render.setFogMode(0) end)

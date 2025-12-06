@@ -1,0 +1,140 @@
+--@name Multi Purpose TP (PVE checks)
+--@author desu
+--@server
+--@model models/props_lab/crematorcase.mdl
+
+--[[
+Only works while in PVE
+
+Chat Commands:
+
+!mtp <playername> - teleports to target player if target player is in PVE
+!mtpa - teleports to AimPos
+!mtpsavepos - saves position for use with !mtprecall
+!mtprecall - teleports to saved position (if you do this without saving a pos it will send you to 0,0,0)
+!mtpspawn - toggles automatic teleport to death location (ON by default)
+!mtpakeybind - toggles Alt to teleport to AimPos (OFF by default)
+!mtptome <playername> - sends a chair to target player if target player is in PVE, if the target player enters chair returns player and chair to you
+!mtpparent <playername> - parents a chair to a player and puts you in the chair.... theres no way easy to delete the chair without deleting the chip so probably dont abuse this or ill find you and kill you
+]]
+
+local mtpAimPosKeybind = false
+local deathRespawnActive = true
+local deathPos
+local deathAng
+local savedPos = Vector(0,0,0)
+
+local function TPtoPlayer(plyName)
+    if owner():isInPVE() then
+        local plyNameMatches = find.playersByName(plyName, false, false)
+        if plyNameMatches[1]:isInPVE() then
+            print("TPing to", plyNameMatches[1])
+            local seat = prop.createSeat(plyNameMatches[1]:getPos()+Vector(0,0,100),plyNameMatches[1]:worldToLocalAngles(plyNameMatches[1]:getEyeAngles()),"models/nova/airboat_seat.mdl", true)
+            seat:use()
+            seat:remove()
+        else
+            print("Target player is in PVP! Cannot TP to PVP players.")
+        end
+    end
+end
+
+local function TPtoPos(vec)
+    if owner():isInPVE() then
+        print("TPing to", vec)
+        local seat = prop.createSeat(vec+Vector(0,0,50),owner():worldToLocalAngles(owner():getEyeAngles()),"models/nova/airboat_seat.mdl", true)
+        seat:use()
+        seat:remove()
+    end
+end
+
+local function TPtoMe(plyName)
+    if owner():isInPVE() then
+        local plyNameMatches = find.playersByName(plyName, false, false)
+        if plyNameMatches[1]:isInPVE() then
+            print("Sending TP chair to:", plyNameMatches[1])
+            local seat = prop.createSeat(plyNameMatches[1]:getPos()+Vector(0,0,100),plyNameMatches[1]:worldToLocalAngles(plyNameMatches[1]:getEyeAngles()),"models/nova/airboat_seat.mdl", true)
+            hook.add("PlayerEnteredVehicle", "bringtome", function(ply, veh, num)
+                if ply==plyNameMatches[1] and owner():isInPVE() and veh==seat then
+                    seat:setPos(owner():getPos()+Vector(0,0,50))
+                    print("Bringing player to you")
+                    seat:remove()
+                    hook.remove("PlayerEnteredVehicle", "bringtome")
+                end
+            end) 
+        else
+            print("Target player is in PVP! Cannot TP PVP players.")
+        end
+    end
+end
+
+local function ParenttoPlayer(plyName) --this is so fucking retarded
+    if owner():isInPVE() then
+        local plyNameMatches = find.playersByName(plyName, false, false)
+        if plyNameMatches[1]:isInPVE() then
+            print("TPing to", plyNameMatches[1])
+            local holo = hologram.create(plyNameMatches[1]:getPos()+Vector(0,0,100),Angle(0,0,0),"models/Combine_Helicopter/helicopter_bomb01.mdl",Vector(0))
+            local seat = prop.createSeat(plyNameMatches[1]:getPos()+Vector(0,0,100),Angle(0,0,0),"models/nova/airboat_seat.mdl", true)
+            seat:setColor(Color(0,0,0,0))
+            seat:use()
+            holo:setParent(plyNameMatches[1]) 
+            seat:setParent(holo) --why can i parent a seat to a holo parented to a player but i cant just parent the seat to the player??????????
+        else
+            print("Target player is in PVP! Cannot TP to PVP players.")
+        end
+    end
+end
+
+hook.add("PlayerDeath", "deathrespawn", function(ply, inf, attk)
+    if ply==owner() and owner():isInPVE() then
+        deathPos = ply:getPos()
+        deathAng = ply:getEyeAngles()
+    end
+end) 
+
+hook.add("PlayerSpawn", "spawnrespawn", function(ply)
+    if ply==owner() and owner():isInPVE() and deathRespawnActive == true then
+        local seat = prop.createSeat(deathPos+Vector(0,0,25),deathAng+Angle(0,-90,0),"models/nova/airboat_seat.mdl", true)
+        seat:use()
+        seat:remove()
+    end
+end) 
+
+hook.add("KeyPress", "inputtesting", function(ply, key)
+    if ply==owner() and mtpAimPosKeybind == true then
+        if key == 262144 then
+            TPtoPos(owner():getEyeTrace()["HitPos"])
+        end
+    end
+end)  
+
+hook.add("PlayerSay", "cmdhook", function(ply, txt)
+    if ply==owner() and txt:sub(1, 1)=="!" then
+        if owner():isInPVE() then
+            local cmd = string.split(string.lower(txt:sub(2))," ")
+            if cmd[1] == "mtpspawn" then
+                deathRespawnActive = !deathRespawnActive
+                print("TP to death location:",deathRespawnActive)
+            elseif cmd[1] == "mtp" then
+                TPtoPlayer(cmd[2])
+            elseif cmd[1] == "mtpa" then
+                TPtoPos(owner():getEyeTrace()["HitPos"])
+            elseif cmd[1] == "mtpakeybind" then
+                mtpAimPosKeybind = !mtpAimPosKeybind
+                print("Alt TPs to AimPos:",mtpAimPosKeybind)
+            elseif cmd[1] == "mtpsavepos" then
+                savedPos = owner():getPos()
+                print("Saved recall pos:",savedPos)
+            elseif cmd[1] == "mtprecall" then
+                TPtoPos(savedPos)
+            elseif cmd[1] == "mtptome" then
+                TPtoMe(cmd[2])
+            elseif cmd[1] == "mtpparent" then
+                ParenttoPlayer(cmd[2])
+            end
+        else
+            print("Must be in PVE to use this chip!")
+        end
+        return ""
+    end
+end)
+    

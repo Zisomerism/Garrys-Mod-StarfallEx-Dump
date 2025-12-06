@@ -1,0 +1,13 @@
+--@name Squad Only Collision
+--@author desu
+--@server
+
+local ent = chip():isWeldedTo()
+ent:addCollisionListener(function(data)
+    local hitEnt = data.HitEntity
+    if hitEnt:isPlayer() and hitEnt:getSquadID() == owner():getSquadID() then
+        ent:setCollisionGroup(18)
+    else
+        ent:setCollisionGroup(0)
+    end
+end)

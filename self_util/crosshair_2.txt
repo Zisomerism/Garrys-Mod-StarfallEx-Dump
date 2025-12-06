@@ -1,0 +1,26 @@
+--@name hud/crosshair 2
+--@client
+--@owneronly
+
+if player() ~= owner() then return end
+enableHud(owner(), true)
+
+local color = Color(204, 102, 153)
+
+hook.add("drawhud", "crosshair", function()
+    local x, y = render.getResolution()
+    local midX, midY = x / 2, y / 2
+    render.setColor(color)
+    render.drawCircle(midX, midY, 10)
+    render.drawRectRotated(midX, midY, 1, 5, 45)
+    render.drawRectRotated(midX, midY, 1, 5, -45)
+end) 
+
+hook.add("calcview", "zoom", function(pos, ang, fov, znear, zfar)
+    if input.isMouseDown( MOUSE.MOUSE2 ) then
+        fov = 30
+    else
+        fov = 75
+    end
+    return {fov = fov}
+end) 

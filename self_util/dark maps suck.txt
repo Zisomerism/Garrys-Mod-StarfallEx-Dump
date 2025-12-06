@@ -1,0 +1,18 @@
+--@name Dark Maps Suck
+--@author desu
+--@client
+--@owneronly
+
+if player() == owner() then enableHud(owner(), true) end
+
+local brightnessLevel = 1
+
+hook.add("drawhud","",function()
+    render.clear()
+    resX,resY=render.getResolution()
+    render.overrideBlend(true,2,9,0,8,6,1)
+    render.setRGBA(255,255,255)
+    for i=1,brightnessLevel,1 do 
+        render.drawRect(0,0,resX,resY)
+    end
+end)

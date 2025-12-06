@@ -1,0 +1,107 @@
+--@name Combine Mounted Turret
+--@author desu
+--@shared
+--@model models/hunter/plates/plate05x05.mdl
+
+if SERVER then
+    local turretCount = 2    
+
+    chip():setAngles(Angle(0,0,0))
+    chip():setMaterial("gigaconvertedmats/metalcombine002")
+    wire.adjustOutputs({"Out"}, {"number"})
+
+    local firstTurret
+    for i = 1,turretCount,1 do
+        timer.create(tostring(i), i/2, 1, function()
+            local turret = prop.createSent(chip():getPos()+Vector(5,0,10), chip():getAngles(), "gmod_wire_turret", true, {["damage"] = (i == 1 and 18 or 10), ["delay"] = 0.1, ["spread"] = 0.01, ["force"] = 2, ["tracer"] = (i == 1 and "AR2Tracer" or ""), ["sound"] = (i % 3 == 0 and "Weapon_AR2.Single" or "NPC_FloorTurret.Shoot"), ["Model"] = "models/weapons/w_rif_ak47.mdl"})
+            if i == 1 then firstTurret = turret turret:setParent(chip()) else turret:setParent(firstTurret) end
+            wire.create(turret, chip(), "Fire", "Out", 0)
+            turret:setColor(Color(0,0,0,0))
+            timer.remove(tostring(i))
+        end)
+    end 
+    
+    timer.create("initdelay", 2, 1, function()
+        holo = hologram.create(firstTurret:localToWorld(firstTurret:worldToLocal(firstTurret:getPos())+Vector(5.31640625,0,-8)),firstTurret:getAngles(),"models/props_combine/bunker_gun01.mdl")
+        holo:setParent(chip())
+        holo:setAnimation(3, 5)
+    
+        hook.add("PlayerUse", "EnterTurret", function(ply, ent)
+            if ent == chip() then
+                holo:setAnimation(1)
+                timer.create("controlloop", 0.1, 0, function()
+                    if ply:isAlive() and ply:getPos():getDistance(chip():getPos()) < 100 then
+                        firstTurret:setAngles((ply:getEyeTrace()["HitPos"] - firstTurret:getPos()):getAngle())
+                        hook.add("KeyPress", "TurretFire", function(inputply, key)
+                            if ply == inputply and key == 1 then 
+                                wire.ports["Out"] = 1
+                                timer.create("fireanim", 0.1, 0, function()
+                                    holo:setAnimation(2)
+                                end)
+                            end
+                        end)
+                        hook.add("KeyRelease", "TurretStopFire", function(inputply, key)
+                            if ply == inputply and key == 1 then
+                                wire.ports["Out"] = 0
+                                timer.remove("fireanim")
+                            end 
+                        end)
+                    else
+                        holo:setAnimation(3)
+                        wire.ports["Out"] = 0
+                        timer.remove("controlloop")
+                        timer.remove("fireanim")
+                        hook.remove("KeyPress", "TurretFire")
+                        hook.remove("KeyRelease", "TurretStopFire")
+                        net.start("StopCrosshair")
+                        net.send(ply)
+                        net.start("StopGunAngles")
+                        net.send()
+                    end
+                end)
+                net.start("StartCrosshair")
+                net.writeEntity(firstTurret)
+                net.send(ply)
+                net.start("StartGunAngles")
+                net.writeEntity(firstTurret)
+                net.writeEntity(holo)
+                net.send()
+            end
+        end)
+        
+        timer.remove("initdelay")
+    end)
+    
+else
+    
+    net.receive("StartGunAngles", function(len)
+        local turret = net.readEntity()
+        local holo = net.readEntity()
+        timer.create("gunangs", 0.1, 0, function()
+            local angles = holo:worldToLocalAngles(turret:getAngles())
+            holo:manipulateBoneAngles(4, Angle(angles.pitch+5, 0, 0)) 
+            holo:manipulateBoneAngles(3, Angle(0, angles.yaw, 0))
+        end)
+    end)
+    
+    net.receive("StopGunAngles", function(len)
+        timer.remove("gunangs")
+    end)
+    
+    net.receive("StartCrosshair", function(len)
+        concmd("gm_giveswep none")
+        local turret = net.readEntity()
+        enableHud(player(), true)
+        hook.add("drawhud", "renderCrosshair", function()
+            local pos = trace.line(turret:getPos()+Vector(0,0,6), player():getEyeTrace()["HitPos"]+Vector(0,0,6), table.add({turret},turret:getChildren()))["HitPos"]:toScreen()
+            render.setColor(Color(204, 102, 153))
+            render.drawCircle(pos.x, pos.y, 5)
+        end)
+    end)
+
+    net.receive("StopCrosshair", function(len)
+        enableHud(player(), false)
+        hook.remove("drawhud", "renderCrosshair")
+    end)
+
+end

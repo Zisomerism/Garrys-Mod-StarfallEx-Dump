@@ -1,0 +1,78 @@
+--@name Glide Missile Fire Control
+--@author desu
+--@server
+
+wire.adjustInputs( {"Fire", "TargetA", "TargetB", "TargetC", "Launcher"},{"number", "entity", "entity", "entity", "entity"} )
+wire.adjustOutputs( {"Fire", "Target"},{"number", "entity"} )
+
+local function redirect( ent, targetPos )
+    if not isValid( ent ) then return end
+    local entPos = ent:getPos()
+    local tr = trace.line ( entPos, targetPos, ent )
+    if tr.Hit then
+        timer.simple( 0.2, function()
+            redirect( ent, targetPos )
+        end )
+        return
+    end
+    local direction = ( targetPos - entPos ):getNormalized()
+    local angles = direction:getAngle()
+    ent:setAngles( angles )
+end
+
+local function findClosestTarget( ent, t )
+    if not isValid( ent ) then return nil end
+    local entPos = ent:getPos()
+    local closestTarget = nil
+    local closestDist = 5000000000
+    
+    for i = 1, #t do
+        local target = t[i]
+        if isValid( target ) and target:getHealth() > 0 then
+            local targetPos = target:getPos()
+            local dist = entPos:getDistanceSqr( targetPos )
+            if dist < closestDist then
+                closestDist = dist
+                closestTarget = target
+            end
+        end
+    end
+
+    return closestTarget
+end
+
+local launcher, primaryTarget
+local targets = {}
+hook.add( "Input", "HandleEntityInput", function( name, value )
+    if name == "Fire" and isValid( launcher ) then
+        wire.ports["Fire"] = isValid( targets[1] ) and value or 0
+        if value == 1 and isValid( primaryTarget ) and primaryTarget:getHealth() > 0 then
+            launcher:isWeldedTo():applyForceCenter( Vector( 0, 0, -2000000 ) ) 
+            timer.simple( 0.2, function()
+            local missiles = find.byClass( "glide_missile" )
+            for i = 1, #missiles do
+                local ent = missiles[i]
+                if not isValid( ent ) or ent:entOwner() ~= launcher then return end
+                local target = findClosestTarget( ent, targets )
+                if not isValid( target ) then return end
+                local targetPos = target:getPos()
+                redirect( ent, targetPos )
+            end
+            end)
+        end
+    elseif name == "TargetA" then
+        targets[1] = value
+    elseif name == "TargetB" then
+        targets[2] = value
+    elseif name == "TargetC" then
+        targets[3] = value
+    elseif name == "Launcher" then
+        launcher = value
+    end
+    if ( name == "TargetA" or name == "TargetB" or name == "TargetC" ) and isValid( launcher ) and #targets > 0 then
+        primaryTarget = findClosestTarget( launcher, targets )
+        if not isValid( primaryTarget ) then primaryTarget = findClosestTarget( launcher, targets ) end
+        if not isValid( primaryTarget ) then return end
+        wire.ports["Target"] = primaryTarget
+    end
+end )

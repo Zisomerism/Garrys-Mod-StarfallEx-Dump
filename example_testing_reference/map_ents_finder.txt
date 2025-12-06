@@ -1,0 +1,117 @@
+--@name map_ents_finder
+--@author desu
+--@shared
+--@owneronly
+
+if SERVER then
+    
+    local entTable = {
+        ["trigger_teleport"] = {},
+        ["trigger_multiple"] = {},
+        ["trigger_proximity"] = {},
+        ["func_button"] = {},
+        ["func_rot_button"] = {},
+        ["func_door"] = {},
+        ["func_door_rotating"] = {},
+        ["func_brush"] = {},
+        ["func_wall_toggle"] = {},
+        ["func_breakable"] = {},
+        ["func_breakable_surf"] = {},
+        ["point_message"] = {},
+        ["info_node"] = {},
+        ["func_tankmortar"] = {}
+    }
+    
+    timer.create("entScan",1,1,function()
+        for k,v in pairs(entTable) do
+            local tempPosTable = {}
+            for j, c in pairs(find.byClass(k)) do
+                if c:isValid() then
+                    table.insert(tempPosTable, c:getPos())
+                end
+            end 
+            entTable[k] = tempPosTable
+        end
+        net.start("entTableHandling")
+        net.writeTable(entTable)
+        net.send()
+    end)
+    
+else
+    
+    if player() == owner() then enableHud(owner(), true) end
+    
+    local withinPx = {x = 20, y = 20}
+    local x, y = render.getGameResolution()
+    local midX, midY = x / 2, y / 2
+    
+    local colorTable = {
+        ["trigger_teleport"] = Color(255,5,255),
+        ["trigger_multiple"] = Color(255,100,255),
+        ["trigger_proximity"] = Color(255,150,255),
+        ["func_button"] = Color(255,0,0),
+        ["func_rot_button"] = Color(255,75,75),
+        ["func_door"] = Color(200,200,200),
+        ["func_door_rotating"] = Color(150,150,150),
+        ["func_brush"] = Color(255,255,5),
+        ["func_wall_toggle"] = Color(200,200,0),
+        ["func_breakable"] = Color(0,255,0),
+        ["func_breakable_surf"] = Color(125,255,125),
+        ["point_message"] = Color(10,100,255),
+        ["info_node"] = Color(155,100,255),
+        ["func_tankmortar"] = Color(255,255,255)
+    }
+    
+    local renderShapesTable = {
+        ["trigger_teleport"] = {["x"] = 5, ["y"] = 2.5},
+        ["trigger_multiple"] = {["x"] = 5, ["y"] = 2.5},
+        ["trigger_proximity"] = {["x"] = 5, ["y"] = 2.5},
+        ["func_button"] = {["x"] = 4, ["y"] = 4},
+        ["func_rot_button"] = {["x"] = 4, ["y"] = 4},
+        ["func_door"] = {["x"] = 1, ["y"] = 5},
+        ["func_door_rotating"] = {["x"] = 1, ["y"] = 5},
+        ["func_brush"] = {["x"] = 1, ["y"] = 5},
+        ["func_wall_toggle"] = {["x"] = 1, ["y"] = 5},
+        ["func_breakable"] = {["x"] = 2, ["y"] = 2.5},
+        ["func_breakable_surf"] = {["x"] = 2, ["y"] = 2.5},
+        ["point_message"] = {["x"] = 2.5, ["y"] = 2.5},
+        ["info_node"] = {["x"] = 2.5, ["y"] = 2.5},
+        ["func_tankmortar"] = {["x"] = 2.5, ["y"] = 2.5}
+    }
+    local entTable = {}
+    
+    local font = render.createFont('FontAwesome', 18, 800, false, false, true, true, 0, false, 0)
+    render.setFont(font)
+    
+    local function isWithin(value, lower, upper)
+        if upper < lower then
+            local lowerTemp = upper
+            upper = lower
+            lower = lowerTemp
+        end
+        if value > lower and value < upper then
+            return true
+        else
+            return false
+        end
+    end
+    
+    hook.add("net","entTableHandling",function(name, len, pl)
+        entTable = net.readTable()
+    end)
+
+    hook.add("drawhud","",function()
+        for k,v in pairs(entTable) do
+            local class = k
+            render.setColor(colorTable[k])
+            for c,j in pairs(v) do
+                local pos = j:toScreen()
+                render.drawRectOutline(pos.x, pos.y, renderShapesTable[k]["x"],renderShapesTable[k]["y"])
+                if isWithin(pos.x, midX-withinPx.x, midX+withinPx.x) and isWithin(pos.y, midY-withinPx.y, midY+withinPx.y) then
+                    render.drawSimpleText(pos.x, pos.y+5, class)
+                end
+            end
+        end
+    end)
+    
+end
