@@ -1,0 +1,186 @@
+--@name Bunny Hop Info Hud
+--@author desu
+--@client
+--@owneronly
+
+--99% ai vibe code slop i just had to fix like 2 things and reprompt it a dozen times
+
+if player() ~= owner() then return end
+enableHud(owner(), true)    
+local ply = owner()
+
+local colWhite, colBlue, colRed =  Color(255, 255, 255, 255), Color(100, 100, 255, 255), Color(255, 100, 100, 255)
+
+-- Ground tracking variables
+local wasOnGround = false
+local lastGroundTouchZ = 0
+local lastGroundTouchTime = 0
+local currentAirTime = 0
+local longestAirTime = 0 -- Track the longest air time achieved
+
+hook.add( "DrawHUD", "HudInfo", function()
+
+    
+    local vel = ply:getVelocity()
+    local ang = ply:getAngles() - Angle(0, 90, 0)
+    
+    -- Get screen center for drawing
+    local x, y = render.getGameResolution()
+    local centerX, centerY = x / 2, y / 2
+    local ply = player()
+    
+    -- Ground detection
+    local isOnGround = ply:isOnGround()
+    local currentTime = timer.realtime()
+    
+    -- Check if player just touched the ground
+    if isOnGround and not wasOnGround then
+        -- Player just touched the ground
+        local pos = ply:getPos()
+        lastGroundTouchZ = pos.z
+        lastGroundTouchTime = currentTime
+        currentAirTime = 0
+    elseif not isOnGround and not ply:isNoclipped() then
+        -- Player is in the air, calculate air time
+        if lastGroundTouchTime > 0 then
+            currentAirTime = currentTime - lastGroundTouchTime
+            -- Update longest air time if current is greater
+            if currentAirTime > longestAirTime then
+                longestAirTime = currentAirTime
+            end
+        end
+    end
+    
+    -- Update ground state
+    wasOnGround = isOnGround
+
+    -- Player representation size
+    local playerRadius = 20
+    
+    -- Trace down from player to check ground below
+    local traceHitZ = nil
+    local groundHigher = false
+    if not isOnGround then
+        local pos = ply:getPos()
+        local traceResult = trace.line(pos, pos - Vector(0, 0, 10000))
+        if traceResult and traceResult.Hit then
+            traceHitZ = traceResult.HitPos.z
+            -- Check if ground below is higher than last jump position
+            if lastGroundTouchZ > 0 and traceHitZ > lastGroundTouchZ + 10 then
+                groundHigher = true
+            end
+        end
+    end
+    
+    -- Get velocity in X and Y (horizontal movement)
+    local velX = vel.x
+    local velY = vel.y
+    
+    -- Transform velocity from world space to player-relative space
+    -- Rotate by negative yaw angle to get player-relative coordinates
+    local yaw = math.rad(-ang.yaw) -- Negative because we want to rotate the velocity relative to player
+    local cosYaw = math.cos(yaw)
+    local sinYaw = math.sin(yaw)
+    
+    -- Rotate velocity vector
+    local relVelX = velX * cosYaw - velY * sinYaw
+    local relVelY = velX * sinYaw + velY * cosYaw
+    
+    -- Calculate magnitude from relative velocity
+    local velMagnitude = math.sqrt(relVelX * relVelX + relVelY * relVelY)
+    
+    -- Normalize direction for line
+    local dirX, dirY = 0, 0
+    if velMagnitude > 0 then
+        dirX = relVelX / velMagnitude
+        dirY = relVelY / velMagnitude
+    end
+    
+    -- Scale line length based on velocity (adjust multiplier as needed)
+    local maxVel = 1000 -- Maximum expected velocity for scaling
+    local lineLength = math.min(velMagnitude / maxVel * 100, 100) -- Max 100 pixels
+    if lineLength < 5 then lineLength = 5 end -- Minimum visible length
+    
+    -- Draw player circle (top-down representation)
+    -- Change color based on ground state and height comparison
+    if isOnGround then
+        render.setColor( colBlue ) -- Blue when on ground
+    elseif groundHigher then
+        render.setColor( colRed ) -- Red when ground below is higher than last jump
+    else
+        render.setColor( colWhite ) -- White when in air (normal)
+    end
+    render.drawCircle(centerX, centerY, playerRadius)
+    
+    -- Draw center dot
+    render.setColor( colBlue ) -- Blue
+    render.drawCircle(centerX, centerY, 3)
+    
+    -- Draw trace line down from player (visual representation)
+    if not isOnGround and traceHitZ then
+        local pos = ply:getPos()
+        local traceDistance = pos.z - traceHitZ
+        -- Scale trace distance to screen space (adjust as needed)
+        local maxTraceDistance = 500 -- Maximum trace distance for scaling
+        local traceLineLength = math.min(traceDistance / maxTraceDistance * 150, 150) -- Max 150 pixels
+        
+        -- Draw trace line downward from center
+        render.setColor( colWhite ) -- Gray, semi-transparent
+        render.drawLine(centerX, centerY, centerX, centerY + traceLineLength)
+        
+        -- Draw small indicator at the end of trace
+        render.setColor( colWhite )
+        render.drawCircle(centerX, centerY + traceLineLength, 2)
+    end
+    
+    -- Draw velocity line
+    if velMagnitude > 0 then
+        local endX = centerX + dirX * lineLength
+        local endY = centerY - dirY * lineLength -- Negative Y because screen Y increases downward
+        
+        -- Line color based on speed (green to red gradient)
+        local speedRatio = math.min(velMagnitude / maxVel, 1)
+        local r = math.floor(255 * speedRatio)
+        local g = math.floor(255 * (1 - speedRatio))
+        local b = 0
+        
+        render.setColor(Color( r, g, b, 255 ))
+        render.drawLine(centerX, centerY, endX, endY)
+        
+        -- Draw arrow head at end of line
+        local arrowSize = 5
+        local angle = math.atan2(-dirY, dirX) -- Angle in radians
+        
+        -- Arrow head points
+        local arrowX1 = endX - arrowSize * math.cos(angle - math.pi / 6)
+        local arrowY1 = endY - arrowSize * math.sin(angle - math.pi / 6)
+        local arrowX2 = endX - arrowSize * math.cos(angle + math.pi / 6)
+        local arrowY2 = endY - arrowSize * math.sin(angle + math.pi / 6)
+        
+        render.drawLine(endX, endY, arrowX1, arrowY1)
+        render.drawLine(endX, endY, arrowX2, arrowY2)
+    end
+    
+    -- Draw air time display
+    if not isOnGround and lastGroundTouchTime > 0 then
+        local airTimeText = string.format("Air Time: %.3fs", currentAirTime)
+        render.setColor( colWhite )
+        render.drawText(centerX - 100, centerY + 50, airTimeText)
+        
+        -- Draw longest air time below current air time
+        local longestAirTimeText = string.format("Longest: %.3fs", longestAirTime)
+        render.setColor( colWhite )
+        render.drawText(centerX - 100, centerY + 70, longestAirTimeText)
+    elseif isOnGround and longestAirTime > 0 then
+        -- Show longest air time even when on ground
+        local longestAirTimeText = string.format("Longest: %.3fs", longestAirTime)
+        render.setColor( colWhite )
+        render.drawText(centerX - 100, centerY + 50, longestAirTimeText)
+    end
+    
+    -- Draw ground indicator (blue when on ground)
+    if isOnGround then
+        render.setColor( colBlue )
+        render.drawText(centerX - 50, centerY + 30, "ON GROUND")
+    end
+end )

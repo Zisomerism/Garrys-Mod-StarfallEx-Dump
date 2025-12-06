@@ -1,0 +1,251 @@
+--@name Glide Aircraft HUD
+--@author desu
+--@shared
+
+
+if SERVER then
+    local baseEnt, Active, Driver, Altitude
+    local function setAppearance()
+        for i = 1, #baseEnt:getMaterials() do
+            if baseEnt:getSubMaterial( i ) == "models/gta5/vehicles/body_paint" or baseEnt:getSubMaterial( i ) == "models/gta5/vehicles/body_paint2" then
+                baseEnt:setSubMaterial( i, "models/gta5/vehicles/army_camouflage_512" )
+            end
+        end
+        baseEnt:setColor( Color( 135, 155, 140 ) )
+    end
+        
+    wire.adjustInputs({"Vehicle", "Active", "Driver", "Altitude"},{"entity", "number", "entity", "number"})
+    hook.add("Input", "HandleEntityInput", function(name, value)
+        if name == "Vehicle" and isValid( value ) then
+            baseEnt = value
+            setAppearance()
+        elseif name == "Active" then
+            Active = value
+        elseif name == "Driver" and isValid( baseEnt ) then
+            if isValid( value ) then
+                Driver = value
+                net.start( "InitDriverClient" )
+                net.writeEntity( baseEnt )
+                net.send( Driver, false )
+                enableHud( Driver, true )
+                CamAng = CamAng or baseEnt:getAngles()
+            elseif isValid( Driver ) then
+                net.start( "CleanupDriverClient" )
+                net.send( Driver, false )
+                enableHud( Driver, false )
+            end
+        elseif name == "Altitude" and Active == 1 and isValid( Driver ) then
+            Altitude = value
+            net.start( "AltitudeToCL" )
+            net.writeInt( Altitude, 12 )
+            net.send( Driver, true )
+        end
+    end)
+    
+    local function initChip()
+        local ent = chip():isWeldedTo()
+        if isValid( ent ) then
+            wire.create( chip(), ent, "Active", "Active", 0 )
+            wire.create( chip(), ent, "Driver", "Driver", 0 )
+            wire.create( chip(), ent, "Vehicle", "entity", 0 )
+            wire.create( chip(), ent, "Altitude", "Altitude", 0 )
+        end
+    end
+    
+    hook.add("ClientInitialized", "", function(ply)
+        if ply == owner() then
+            initChip()
+        end
+    end)
+
+else
+    
+    
+    net.receive( "AltitudeToCL", function()
+        Altitude = net.readInt( 12 )
+    end )
+    
+    net.receive( "InitDriverClient", function( len )
+        local vehicle = net.readEntity()
+    
+        local colRed = Color(255,5,0)
+        local colGreen = Color(5,255,0)
+        
+        local playersTemp = {}
+    
+        local font = render.createFont('FontAwesome', 18, 800, false, false, true, true, 0, false, 0)
+        render.setFont(font)
+            
+        local lastTick = 0
+        local tickDelay = 0.2
+    
+        hook.add("DrawHUD", "HudInfo", function() --this entire hook is ai vibe coded
+            
+            local x, y = render.getGameResolution()
+            local midX, midY = x / 2, y / 2
+            
+            -- Get pod data for HUD elements
+            local podVel = vehicle:getVelocity()
+            local podAng = vehicle:getAngles()
+            local speed = math.round(podVel:getLength())
+            local bearing = math.round(podAng.y, 0)
+            local climbRate = math.round(podVel.z, 1)
+               
+            -- Artificial Horizon
+            local horizonSize = 400
+            local horizonX = midX
+            local horizonY = midY
+            
+            -- Get pitch and roll
+            local pitch = -podAng.p
+            local roll = podAng.r
+            
+            -- Clamp pitch for display
+            local maxPitch = 60
+            pitch = math.clamp(pitch, -maxPitch, maxPitch)
+            
+            -- Horizon line
+            render.setColor(Color(0, 255, 0, 255))
+            local horizonOffset = (pitch / maxPitch) * horizonSize / 2
+            render.drawLine(horizonX - horizonSize/2, horizonY + horizonOffset, horizonX + horizonSize/2, horizonY + horizonOffset)
+            
+            -- Pitch lines
+            for i = -6, 6 do
+                if i ~= 0 then
+                    local pitchLineY = horizonY + horizonOffset - (i * 60)
+                    local lineLength = i % 2 == 0 and 40 or 20
+                    
+                    -- Only draw if within the horizon display area
+                    local horizonTop = horizonY - horizonSize/2
+                    local horizonBottom = horizonY + horizonSize/2
+                    
+                    if pitchLineY >= horizonTop and pitchLineY <= horizonBottom then
+                        render.drawLine(horizonX - lineLength/2, pitchLineY, horizonX + lineLength/2, pitchLineY)
+                        render.drawSimpleText(horizonX + horizonSize/2 + 5, pitchLineY - 8, tostring(i * 10))
+                    end
+                end
+            end
+            
+            -- Roll indicator (aircraft symbol)
+            local rollRad = math.rad(roll)
+            local wingLength = 90
+            local noseLength = 90
+            local centerX, centerY = horizonX, horizonY
+            
+            -- Draw aircraft symbol (rotated by roll)
+            local noseX = centerX + math.sin(rollRad) * noseLength
+            local noseY = centerY - math.cos(rollRad) * noseLength
+            local leftWingX = centerX - math.cos(rollRad) * wingLength
+            local leftWingY = centerY - math.sin(rollRad) * wingLength
+            local rightWingX = centerX + math.cos(rollRad) * wingLength
+            local rightWingY = centerY + math.sin(rollRad) * wingLength
+            
+            render.drawLine(centerX, centerY, noseX, noseY) -- Nose
+            render.drawLine(centerX, centerY, leftWingX, leftWingY) -- Left wing
+            render.drawLine(centerX, centerY, rightWingX, rightWingY) -- Right wing
+            
+            -- Roll marks
+            for i = -3, 3 do
+                if i ~= 0 then
+                    local markAngle = math.rad(i * 30)
+                    local markX1 = centerX + math.sin(rollRad + markAngle) * (horizonSize/2 - 10)
+                    local markY1 = centerY - math.cos(rollRad + markAngle) * (horizonSize/2 - 10)
+                    local markX2 = centerX + math.sin(rollRad + markAngle) * (horizonSize/2)
+                    local markY2 = centerY - math.cos(rollRad + markAngle) * (horizonSize/2)
+                    render.drawLine(markX1, markY1, markX2, markY2)
+                end
+            end
+            
+            -- Speed display (top left)
+            render.drawSimpleText(midX - 300, midY, "SPD: " .. tostring(speed) .. " u/s")
+            local climbRateText = "CLMB: " .. tostring(climbRate) .. " u/s"
+            if climbRate > 0 then
+                render.setColor(Color(0, 255, 0, 255))
+            elseif climbRate < 0 then
+                render.setColor(Color(255, 0, 0, 255))
+            else
+                render.setColor(Color(0, 255, 0, 255))
+            end
+            render.drawSimpleText(midX - 300, midY + 20, climbRateText)
+            if Altitude ~= nil then
+                if Altitude < 101 then
+                    render.setColor(Color(255, 0, 0, 255))
+                else
+                    render.setColor(Color(0, 255, 0, 255))
+                end
+            render.drawSimpleText(midX - 300, midY + 40, "ALT: " .. tostring(Altitude) )
+            end
+            
+            local compassY = 20 -- Position from top
+            local compassCenterX = midX
+            
+            -- Box dimensions
+            local boxWidth = 60
+            local boxHeight = 30
+            local boxX = compassCenterX - boxWidth/2
+            local boxY = compassY
+            
+            -- Current bearing
+            local currentBearing = bearing
+            
+            -- Calculate pixel width per degree for the ribbon
+            local pixelsPerDegree = 4
+            
+            -- Draw the ribbon background (extending beyond the box)
+            local ribbonWidth = boxWidth -- Ribbon extends beyond box
+            local ribbonHeight = boxHeight
+            render.setColor(Color(0, 0, 0, 200))
+            render.drawRect(compassCenterX - ribbonWidth/2, boxY, ribbonWidth, ribbonHeight)
+            
+            -- Draw numbers on the ribbon
+            local startBearing = currentBearing - (ribbonWidth / 2 / pixelsPerDegree)
+            local endBearing = currentBearing + (ribbonWidth / 2 / pixelsPerDegree)
+            
+            for bearingTick = math.floor(startBearing), math.ceil(endBearing) do
+                -- Normalize bearing to 0-360
+                local normalizedBearing = bearingTick % 360
+                if normalizedBearing < 0 then normalizedBearing = normalizedBearing + 360 end
+                
+                -- Calculate X position relative to center
+                local bearingOffset = bearingTick - currentBearing
+                local numberX = compassCenterX + (bearingOffset * pixelsPerDegree)
+                
+                -- Only draw if within ribbon bounds
+                if numberX >= compassCenterX - ribbonWidth/2 and numberX <= compassCenterX + ribbonWidth/2 then
+                    -- Draw number every 10 degrees
+                    if normalizedBearing % 10 == 0 then
+                        local bearingText = string.format("%03d", normalizedBearing)
+                        local textWidth = render.getTextSize(bearingText)
+                        
+                        render.setColor(Color(0, 255, 0, 200)) -- Green for ribbon numbers
+                        render.drawSimpleText(numberX - textWidth/2, boxY + boxHeight/2 - 8, bearingText)
+                    end
+                    
+                    -- Draw tick marks every 5 degrees
+                    if normalizedBearing % 5 == 0 then
+                        local tickLength = (normalizedBearing % 10 == 0) and 8 or 4
+                        render.setColor(Color(0, 255, 0, 150))
+                        render.drawLine(numberX, boxY, numberX, boxY + tickLength)
+                        render.drawLine(numberX, boxY + boxHeight, numberX, boxY + boxHeight - tickLength)
+                    end
+                end
+            end
+            
+            -- Draw the box border (window that shows current heading)
+            render.setColor(Color(0, 255, 0, 255)) -- Green border
+            render.drawLine(boxX, boxY, boxX + boxWidth, boxY) -- Top
+            render.drawLine(boxX, boxY + boxHeight, boxX + boxWidth, boxY + boxHeight) -- Bottom
+            render.drawLine(boxX, boxY, boxX, boxY + boxHeight) -- Left
+            render.drawLine(boxX + boxWidth, boxY, boxX + boxWidth, boxY + boxHeight) -- Right
+        
+        end) 
+        
+    end )
+    
+    net.receive( "CleanupDriverClient", function()
+        hook.remove( "Think", "DriverThink" )
+        hook.remove( "PostDrawOpaqueRenderables", "BoundingBoxes" )
+        hook.remove( "DrawHUD", "HudInfo" )
+    end )
+
+end
