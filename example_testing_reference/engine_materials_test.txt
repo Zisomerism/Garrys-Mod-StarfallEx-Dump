@@ -1,0 +1,71 @@
+--@name engine materials test chip
+--@author desu
+--@server
+
+local test = chip():isWeldedTo()
+--all of these post processing materials probably only work in single player
+--test:setMaterial( "pp/add" ) -- renders player view with additive blending?
+--test:setMaterial( "pp/bloom" ) -- nothing?
+--test:setMaterial( "pp/blurscreen" ) -- nothing?
+--test:setMaterial( "pp/blurx" ) -- nothing?
+--test:setMaterial( "pp/blury" ) -- nothing?
+--test:setMaterial( "pp/bokehblur" ) -- nothing?
+--test:setMaterial( "pp/colour" ) -- nothing?
+--test:setMaterial( "pp/copy" ) -- invalid material
+--test:setMaterial( "pp/dof" ) --dof blur
+--test:setMaterial( "pp/downsample" ) -- nothing?
+--test:setMaterial( "pp/fb" ) -- nothing?
+--test:setMaterial( "pp/frame_blend" ) -- appears as black material
+--test:setMaterial( "pp/morph/brush1" ) -- appears as invisible material
+--test:setMaterial( "pp/morph/brush_outline" ) -- appears as invisible material
+--test:setMaterial( "pp/morph/refract" ) -- nothing?
+--test:setMaterial( "pp/motionblur" ) -- nothing?
+--test:setMaterial( "pp/rt" ) -- appears as black material (didn't test with RT camera spawned)
+--test:setMaterial( "pp/scene-normal-model" ) -- appears as wireframe (models/wireframe)
+--test:setMaterial( "pp/scene-normal-world" ) -- appears as wireframe (models/wireframe)
+--test:setMaterial( "pp/scene-position-model" ) -- appears as wireframe (models/wireframe)
+--test:setMaterial( "pp/scene-position-world" ) -- appears as wireframe (models/wireframe)
+--test:setMaterial( "pp/sharpen" ) -- nothing?
+--test:setMaterial( "pp/sobel" ) -- nothing?
+--test:setMaterial( "pp/sub" ) -- renders player view with subtract blending?
+--test:setMaterial( "pp/sunbeams" ) -- nothing?
+--test:setMaterial( "pp/texturize" ) -- nothing?
+--test:setMaterial( "pp/toytown-top" ) -- appears as invisible material
+--test:setMaterial( "pp/videoscale" ) -- nothing?
+--test:setMaterial( "pp/videoupscale" ) -- renders player view
+
+--engine materials, these were only tested with default rendergroup/rendermode and color
+--test:setMaterial( "engine/additivevertexcolorvertexalpha" ) -- appears as invisible material
+--test:setMaterial( "engine/colorcorrection" ) -- nothing?
+--test:setMaterial( "engine/depthwrite" ) -- blocks rendering of things within/beyond ent while close but not far away (high detail LOD related)
+--test:setMaterial( "engine/filmdust" ) -- nothing?
+--test:setMaterial( "engine/filmgrain" ) -- nothing?
+--test:setMaterial( "engine/framesync" ) -- appears as wireframe (models/wireframe)
+--test:setMaterial( "engine/lightsprite" ) -- appears as invisible material
+--test:setMaterial( "engine/modulatesinglecolor" ) -- appears as black material
+--test:setMaterial( "engine/occlusionproxy" ) -- appears as invisible material
+--test:setMaterial( "engine/occlusionproxy_countdraw" ) -- appears as black material
+--test:setMaterial( "engine/preloadtexture" ) -- appears as white material (models/debug/debugwhite)
+--test:setMaterial( "engine/shadowbuild" ) -- renders object with this material through world brushes and other ents
+--test:setMaterial( "engine/singlecolor" ) -- appears as white material (models/debug/debugwhite)
+--test:setMaterial( "engine/vmtview_background" ) -- appears as white material (models/debug/debugwhite)
+--test:setMaterial( "engine/volumetricfog" ) -- nothing?
+--test:setMaterial( "engine/writestencil" ) -- appears as invisible material
+test:setMaterial( "engine/writez" ) -- blocks rendering of ents within/beyond (far Z clipping related)
+
+--default gmod stuff probably for gm_construct or something
+--test:setMaterial( "black_outline" ) -- appears as black material
+--test:setMaterial( "white_outline" ) -- appears as white material (models/debug/debugwhite)
+
+--there are more things in "shadertest/" but these were the only two that I found which worked
+--test:setMaterial( "shadertest/cubemap" ) -- default cubemap?
+--test:setMaterial( "shadertest/cubemapdemo" ) -- cubemap directional demo material
+
+--holy crap it's garry newman's cat 
+--test:setMaterial( "matsys_regressiontest/background" ) -- kitty!
+
+--apparently someone at facepunch was a steel reserve fan
+--test:setMaterial( "steelreserve" ) -- steel reserve
+
+--point
+--test:setMaterial( "point" ) -- point
