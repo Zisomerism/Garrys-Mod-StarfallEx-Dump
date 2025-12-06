@@ -1,0 +1,13 @@
+--@name Ungy Only Wall
+--@author desu
+--@server
+
+local ent = chip():isWeldedTo()
+ent:addCollisionListener(function(data)
+    local hitEnt = data.HitEntity
+    if hitEnt:isPlayer() and hitEnt:getSteamID() == "STEAM_0:1:116671892" then
+        ent:setCollisionGroup(18)
+    else
+        ent:setCollisionGroup(0)
+    end
+end)
