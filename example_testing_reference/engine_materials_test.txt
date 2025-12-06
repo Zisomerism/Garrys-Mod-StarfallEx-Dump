@@ -1,4 +1,4 @@
---@name engine materials test chip
+--@name test/materials_test
 --@author desu
 --@server
 
@@ -34,7 +34,6 @@ local test = chip():isWeldedTo()
 --test:setMaterial( "pp/videoscale" ) -- nothing?
 --test:setMaterial( "pp/videoupscale" ) -- renders player view
 
---engine materials, these were only tested with default rendergroup/rendermode and color
 --test:setMaterial( "engine/additivevertexcolorvertexalpha" ) -- appears as invisible material
 --test:setMaterial( "engine/colorcorrection" ) -- nothing?
 --test:setMaterial( "engine/depthwrite" ) -- blocks rendering of things within/beyond ent while close but not far away (high detail LOD related)
@@ -52,20 +51,17 @@ local test = chip():isWeldedTo()
 --test:setMaterial( "engine/volumetricfog" ) -- nothing?
 --test:setMaterial( "engine/writestencil" ) -- appears as invisible material
 test:setMaterial( "engine/writez" ) -- blocks rendering of ents within/beyond (far Z clipping related)
+--test:setMaterial( "engine/shadowbuild" ) -- basically ESP but world brushes cull it still
 
---default gmod stuff probably for gm_construct or something
 --test:setMaterial( "black_outline" ) -- appears as black material
 --test:setMaterial( "white_outline" ) -- appears as white material (models/debug/debugwhite)
 
---there are more things in "shadertest/" but these were the only two that I found which worked
+--most things in shadertest/ don't work
 --test:setMaterial( "shadertest/cubemap" ) -- default cubemap?
 --test:setMaterial( "shadertest/cubemapdemo" ) -- cubemap directional demo material
 
---holy crap it's garry newman's cat 
 --test:setMaterial( "matsys_regressiontest/background" ) -- kitty!
 
---apparently someone at facepunch was a steel reserve fan
 --test:setMaterial( "steelreserve" ) -- steel reserve
 
---point
 --test:setMaterial( "point" ) -- point
