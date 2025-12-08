@@ -34,7 +34,7 @@ hook.add( "Input", "HandleEntityInput", function(name, value)
         vehicleMass = getTotalWeight( vehicleEnt )
         vehicleTurret = findTurret( vehicleEnt )
     elseif name == "Active" then
-        Active = value
+        isActive = value
     elseif name == "Driver" then
         driverPly = value
     end
