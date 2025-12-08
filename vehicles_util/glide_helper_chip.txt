@@ -1,0 +1,61 @@
+--@name glide helper chip
+--@author desu
+--@server
+
+local colOrange, colWhite, colRed, colBlue, colGreen = Color( 255, 165, 0, 255 ), Color( 255, 255, 255, 255 ), Color( 255, 100, 100 , 255 ), Color( 100, 100, 255, 255 ), Color( 100, 255, 100, 255 )
+
+chip():setColor( colOrange )
+
+local function getTotalWeight( ent )
+    local weightTotal = ent:getPhysicsObject():getMass()
+    for _, cEnt in ipairs( ent:getAllConstrained() ) do
+        if cEnt:isValid() and cEnt:getPhysicsObject():isValid() then
+            weightTotal = weightTotal + cEnt:getPhysicsObject():getMass()
+        end
+    end
+    return weightTotal
+end
+
+local function findTurret( ent )
+    local childs = ent:getChildren()
+    for i = 1, #childs do
+        if childs[i]:getClass() == "glide_vehicle_turret" then
+            return childs[i]
+        end
+    end
+end
+
+local vehicleEnt, vehiclePhys, vehicleMass, vehicleTurret, driverPly, isActive
+wire.adjustInputs( {"Vehicle", "Active", "Driver"}, {"entity", "number", "entity"} )
+hook.add( "Input", "HandleEntityInput", function(name, value)
+    if name == "Vehicle" and isValid( value ) then
+        vehicleEnt = value
+        vehiclePhys = vehicleEnt:getPhysicsObject()
+        vehicleMass = getTotalWeight( vehicleEnt )
+        vehicleTurret = findTurret( vehicleEnt )
+    elseif name == "Active" then
+        Active = value
+    elseif name == "Driver" then
+        driverPly = value
+    end
+end )
+
+local function initChip()
+    local ent = chip():isWeldedTo()
+    if isValid( ent ) then
+        wire.create( chip(), ent, "Active", "Active", 0 )
+        wire.create( chip(), ent, "Driver", "Driver", 0 )
+        wire.create( chip(), ent, "Vehicle", "entity", 0 )
+        chip():setColor( colWhite )
+    end
+end
+    
+hook.add( "ClientInitialized", "", function( ply )
+    if ply == owner() then
+        initChip()
+    end
+end)
+
+hook.add("Think", "ControlThink", function()
+    if not isActive or not isValid( vehicleEnt ) or not isValid( driverPly ) then return end
+end )
