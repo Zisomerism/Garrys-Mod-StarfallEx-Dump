@@ -1,0 +1,320 @@
+--@name vehicles_util/glide_projectile_mortar
+--@author desu
+--@shared
+
+local DELAY = 1
+local dmg = 200
+local RADIUS = 500
+local SPEED = 2000
+local GRAVITY = 600
+local DROP_COMP_MULT = 0.5
+
+local colRed, colGreen = Color( 255, 50, 50 ), Color( 50, 255, 50 )
+
+-- Same stepping as client HUD so traces and visuals stay aligned
+local simSteps = 128
+local simDt = 0.08
+
+local turret, turretBody, podController, camController, isActive, Driver, Mass
+local W, A, S, D, Space, Alt, Shift, MouseL, MouseR, ToggleA, ToggleB
+local projectileTemp
+local predictedHitPos = Vector( 0, 0, 0 )
+local projParamTime = 0
+local projParamDelay = 0.08
+if SERVER then
+
+    local function buildProjectileTraceFilter()
+        local f = { chip() }
+        if isValid( turret ) then f[#f + 1] = turret end
+        if isValid( turretBody ) then f[#f + 1] = turretBody end
+        if isValid( Driver ) then f[#f + 1] = Driver end
+        if isValid( projectileTemp ) then f[#f + 1] = projectileTemp end
+        return f
+    end
+
+    -- Parabolic samples with segment traces; first hit becomes predictedHitPos (no client net).
+    local function updatePredictedHitPos()
+        if not isValid( turret ) then return end
+        local dir = turret:getAngles():getUp()
+        local pos = turret:getPos() + dir * 10
+        local vel = dir * SPEED
+        local g = Vector( 0, 0, -GRAVITY )
+        local lastPos = pos
+        local filter = buildProjectileTraceFilter()
+        for i = 1, simSteps do
+            local t = i * simDt
+            local nextPos = pos + vel * t + g * ( 0.5 * t * t )
+            local tr = trace.line( lastPos, nextPos, filter )
+            if tr.Hit then
+                predictedHitPos = tr.HitPos
+                return
+            end
+            lastPos = nextPos
+        end
+        predictedHitPos = lastPos
+    end
+
+    local function initTurret()
+        if isValid( turret ) then
+            wire.create( turret, chip(), "Fire", "Fire", 0 )
+            wire.create( turret, chip(), "Delay", "Delay", 0 )
+            wire.create( turret, chip(), "Damage", "Damage", 0 )
+            wire.create( turret, chip(), "Radius", "Radius", 0 )
+            wire.create( turret, chip(), "Speed", "Speed", 0 )
+            wire.create( turret, chip(), "Gravity", "Gravity", 0 )
+        end
+        wire.ports["Delay"] = DELAY
+        wire.ports["Damage"] = dmg
+        wire.ports["Radius"] = RADIUS
+        wire.ports["Speed"] = SPEED
+        wire.ports["Gravity"] = GRAVITY
+    end
+    
+    local function initPod()
+        if isValid( podController ) then
+            wire.create( chip(), podController, "Active", "Active", 0 )
+            wire.create( chip(), podController, "Driver", "Driver", 0 )
+            wire.create( chip(), podController, "W", "W", 0 )
+            wire.create( chip(), podController, "A", "A", 0 )
+            wire.create( chip(), podController, "S", "S", 0 )
+            wire.create( chip(), podController, "D", "D", 0 )
+            wire.create( chip(), podController, "R", "R", 0 )
+            wire.create( chip(), podController, "Space", "Space", 0 )
+            wire.create( chip(), podController, "Alt", "Alt", 0 )
+            wire.create( chip(), podController, "Shift", "Shift", 0 )
+            wire.create( chip(), podController, "Mouse1", "Mouse1", 0 )
+            wire.create( chip(), podController, "Mouse2", "Mouse2", 0 )
+            wire.create( chip(), podController, "PrevWeapon", "PrevWeapon", 0 )
+            wire.create( chip(), podController, "NextWeapon", "NextWeapon", 0 )
+            wire.create( chip(), podController, "Toggle", "Light", 0 )
+        end
+    end
+
+    local camHolo, camActive
+    local function initCam()
+        camHolo = hologram.create( chip():getPos(), Angle( 0, 0, 0 ), "models/hunter/plates/plate.mdl", Vector( 0, 0, 0 ) )
+    end
+
+    local function viewCam( value )
+        if value == 1 then 
+            camActive = 1
+            Driver:setViewEntity( camHolo )
+        else
+            camActive = 0
+            Driver:setViewEntity( Driver )
+        end
+    end
+
+    local gunCam
+    local function fire( value )
+        MouseL = value
+        wire.ports["Fire"] = MouseL
+        if value ~= 1 or not isValid( Driver ) or not isValid( turret ) then return end
+        timer.simple( 0.1, function()
+            for _, ent in pairs( find.inSphere( turret:getPos(), 512 ) ) do
+                if isValid( ent ) and ent:getClass() == "glide_projectile" then
+                    projectileTemp = ent
+                    if gunCam == 1 then
+                        Driver:setViewEntity( ent )
+                    end
+                end
+            end
+        end )
+    end
+
+    wire.adjustInputs( {"Turret", "TurretBody", "PodController", "Active", "Driver", "W", "A", "S", "D", "R", "Space", "Alt", "Shift", "PrevWeapon", "NextWeapon", "Mouse1", "Mouse2", "Toggle"}, {"entity", "entity", "entity", "number", "entity", "number", "number", "number", "number", "number", "number", "number", "number", "number", "number", "number", "number", "number"} )
+    hook.add("Input", "HandleEntityInput", function(name, value)
+        if name == "Turret" and isValid( value ) then
+            turret = value
+            turret:setColor( colRed )
+            initTurret()
+        elseif name == "TurretBody" and isValid( value ) then
+            turretBody = value
+        elseif name == "PodController" and isValid( value ) then
+            podController = value
+            initPod()
+        elseif name == "Active" then
+            isActive = value
+        elseif name == "Driver" then
+            if isValid( value ) then
+                Driver = value
+                initCam()
+                net.start( "InitDriverClient" )
+                net.writeEntity( turret )
+                net.writeEntity( isValid( turretBody ) and turretBody or turret )
+                net.send( Driver, false )
+                enableHud( Driver, true )
+                turret:setColor( colGreen )
+                CamAng = CamAng or turret:getAngles()
+                projParamTime = timer.curtime()
+            elseif isValid( Driver ) then
+                net.start( "CleanupDriverClient" )
+                net.send( Driver, false )
+                enableHud( Driver, false )
+                turret:setColor( colRed )
+            end
+        elseif name == "W" then
+            W = value
+        elseif name == "A" then
+            A = value
+        elseif name == "S" then
+            S = value
+        elseif name == "D" then
+            D = value
+        elseif name == "R" and value == 1 then
+            ToggleB = ToggleB == 1 and 0 or 1
+            wire.ports["ToggleB"] = ToggleB
+        elseif name == "Space" then
+            Space = value
+        elseif name == "Alt" then
+            Alt = value
+        elseif name == "Shift" then
+            Shift = value
+            gunCam = Shift
+        elseif name == "Mouse1" then
+            fire( value )
+        elseif name == "Mouse2" and isValid( Driver ) then
+            viewCam( value )
+        elseif name == "PrevWeapon" then
+            SPEED = SPEED + 100
+            wire.ports["Speed"] = SPEED
+        elseif name == "NextWeapon" then
+            if SPEED >= 100 then
+                SPEED = SPEED - 100
+            else
+                SPEED = 0
+            end
+            wire.ports["Speed"] = SPEED
+        elseif name == "Toggle" and value == 1 then
+            ToggleA = ToggleA == 1 and 0 or 1
+            wire.ports["ToggleA"] = ToggleA
+        end
+    end)
+
+    wire.adjustOutputs( {"Fire", "Delay", "Damage", "Radius", "Speed", "Gravity", "ToggleA", "ToggleB"}, {"number", "number", "number", "number", "number", "number", "number", "number"} )
+
+    hook.add("Think", "ControlThink", function()
+        if isActive == 0 or not isValid( Driver ) or not isValid( turret ) then return end
+        updatePredictedHitPos()
+        if isValid( turretBody ) then
+            local eyes = Driver:getEyeAngles()
+            turretBody:setAngles( eyes )
+            camHolo:setPos( ( predictedHitPos - Angle( 0, Driver:getEyeAngles().y, 0 ):getForward() * 500 ) + Vector( 0, 0, 2000 ) ) 
+            camHolo:setAngles( Angle( 80, Driver:getEyeAngles().y, 0 ) )
+        end
+
+        local t = timer.curtime()
+        if t >= projParamTime + projParamDelay then
+            projParamTime = t
+            net.start( "ProjectileLauncherParams" )
+            net.writeFloat( SPEED )
+            net.writeFloat( GRAVITY )
+            local ang = turret:getAngles()
+            net.writeAngle( ang )
+            net.writeVector( turret:getPos() )
+            net.send( Driver, false )
+        end
+    end )
+
+end
+    
+if CLIENT then
+    local launcherSpeed, launcherGravity, launcherAngles, launcherPos = 10000, 700, Angle( 0, 0, 0 ), Vector( 0, 0, 0 )
+    local trajTurret, trajTurretBody
+    local tracerCol = Color(255, 255, 255)
+    local font = render.createFont('FontAwesome', 18, 800, false, false, true, true, 0, false, 0)
+
+    local function buildClientTraceFilter()
+        local f = { chip(), player() }
+        if isValid( trajTurret ) then f[#f + 1] = trajTurret end
+        if isValid( trajTurretBody ) and trajTurretBody ~= trajTurret then f[#f + 1] = trajTurretBody end
+        return f
+    end
+
+    net.receive( "ProjectileLauncherParams", function()
+        launcherSpeed = net.readFloat()
+        launcherGravity = net.readFloat()
+        launcherAngles = net.readAngle()
+        launcherPos = net.readVector()
+    end )
+
+    net.receive( "InitDriverClient", function( len )
+        trajTurret = net.readEntity()
+        trajTurretBody = net.readEntity()
+
+        hook.add( "PostDrawOpaqueRenderables", "GlideProjTrajHud", function()
+            -- This launcher model appears to fire along local Up, not Forward.
+            local dir = launcherAngles:getUp()
+            local pos = launcherPos + dir * 10
+            local vel = dir * launcherSpeed
+            local g = Vector( 0, 0, -launcherGravity )
+            local lastPos = pos
+            local filter = buildClientTraceFilter()
+            render.setColor( colGreen )
+
+            for i = 1, simSteps do
+                local t = i * simDt
+                local nextPos = pos + vel * t + g * ( 0.5 * t * t )
+                local tr = trace.line( lastPos, nextPos, filter )
+                local drawTo = tr.Hit and tr.HitPos or nextPos
+                render.draw3DLine( lastPos, drawTo, tracerCol )
+                if tr.Hit then break end
+                lastPos = nextPos
+            end
+        end )
+
+        hook.add( "DrawHUD", "HudInfo", function()
+            render.setFont(font)
+            local w, h = render.getGameResolution()
+            local margin = 16
+            local lineH = 22
+            local titleGap = 6
+            local rows = {
+                { text = "Controls", color = colGreen, extraBelow = titleGap },
+                { text = "Left Mouse = Fire", color = colGreen },
+                { text = "Right Mouse = Artillery Camera", color = colGreen },
+                { text = "Mouse Wheel Up/Down = Adjust shell velocity", color = colGreen },
+                { text = "Shift = Shell Camera", color = colGreen },
+
+            }
+            local totalH = 0
+            for _, row in ipairs( rows ) do
+                totalH = totalH + lineH + ( row.extraBelow or 0 )
+            end
+            local lineY = h - margin - totalH
+            for _, row in ipairs( rows ) do
+                render.setColor( row.color )
+                local tw = render.getTextSize( row.text )
+                render.drawSimpleText( w - margin - tw, lineY, row.text )
+                lineY = lineY + lineH + ( row.extraBelow or 0 )
+            end
+
+            local speedRight = w * 0.7
+            local elevGap = 4
+            local blockH = lineH * 2 + elevGap
+            local blockTopY = h * 0.5 - blockH * 0.5
+
+            local elevStr
+            if isValid( trajTurret ) then
+                elevStr = string.format( "Elevation: %.1f deg", trajTurret:getAngles().p + 90 )
+            else
+                elevStr = "Elevation: __"
+            end
+            local speedStr = "Shell Velocity: " .. tostring( math.floor( launcherSpeed + 0.5 ) ) .. " u/s"
+            render.setColor( colGreen )
+            local elevTw = render.getTextSize( elevStr )
+            local speedTw = render.getTextSize( speedStr )
+            render.drawSimpleText( speedRight - elevTw, blockTopY, elevStr )
+            render.drawSimpleText( speedRight - speedTw, blockTopY + lineH + elevGap, speedStr )
+        end )
+
+        enableHud( player(), true )
+    end )
+
+    net.receive( "CleanupDriverClient", function()
+        hook.remove( "PostDrawOpaqueRenderables", "GlideProjTrajHud" )
+        hook.remove( "DrawHUD", "HudInfo" )
+        enableHud( player(), false )
+        trajTurret, trajTurretBody = nil, nil
+    end )
+end
