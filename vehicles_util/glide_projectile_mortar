@@ -1,4 +1,4 @@
---@name vehicles_util/glide_projectile_mortar
+--@name vehicles_util/glide projectile mortar
 --@author desu
 --@shared
 
@@ -7,11 +7,13 @@ local dmg = 200
 local RADIUS = 500
 local SPEED = 2000
 local GRAVITY = 600
-local DROP_COMP_MULT = 0.5
+
+local CAMERA_PITCH = 80
+local CAMERA_Y_OFFSET = 500
+local CAMERA_Z_OFFSET = 2000
 
 local colRed, colGreen = Color( 255, 50, 50 ), Color( 50, 255, 50 )
 
--- Same stepping as client HUD so traces and visuals stay aligned
 local simSteps = 128
 local simDt = 0.08
 
@@ -32,7 +34,6 @@ if SERVER then
         return f
     end
 
-    -- Parabolic samples with segment traces; first hit becomes predictedHitPos (no client net).
     local function updatePredictedHitPos()
         if not isValid( turret ) then return end
         local dir = turret:getAngles():getUp()
@@ -195,23 +196,19 @@ if SERVER then
 
     hook.add("Think", "ControlThink", function()
         if isActive == 0 or not isValid( Driver ) or not isValid( turret ) then return end
-        updatePredictedHitPos()
         if isValid( turretBody ) then
             local eyes = Driver:getEyeAngles()
             turretBody:setAngles( eyes )
-            camHolo:setPos( ( predictedHitPos - Angle( 0, Driver:getEyeAngles().y, 0 ):getForward() * 500 ) + Vector( 0, 0, 2000 ) ) 
-            camHolo:setAngles( Angle( 80, Driver:getEyeAngles().y, 0 ) )
+            camHolo:setPos( ( predictedHitPos - Angle( 0, Driver:getEyeAngles().y, 0 ):getForward() * CAMERA_Y_OFFSET ) + Vector( 0, 0, CAMERA_Z_OFFSET ) ) 
+            camHolo:setAngles( Angle( CAMERA_PITCH, Driver:getEyeAngles().y, 0 ) )
         end
 
         local t = timer.curtime()
         if t >= projParamTime + projParamDelay then
             projParamTime = t
+            updatePredictedHitPos()
             net.start( "ProjectileLauncherParams" )
             net.writeFloat( SPEED )
-            net.writeFloat( GRAVITY )
-            local ang = turret:getAngles()
-            net.writeAngle( ang )
-            net.writeVector( turret:getPos() )
             net.send( Driver, false )
         end
     end )
@@ -219,7 +216,7 @@ if SERVER then
 end
     
 if CLIENT then
-    local launcherSpeed, launcherGravity, launcherAngles, launcherPos = 10000, 700, Angle( 0, 0, 0 ), Vector( 0, 0, 0 )
+    local launcherSpeed, launcherAngles, launcherPos = 10000, Angle( 0, 0, 0 ), Vector( 0, 0, 0 )
     local trajTurret, trajTurretBody
     local tracerCol = Color(255, 255, 255)
     local font = render.createFont('FontAwesome', 18, 800, false, false, true, true, 0, false, 0)
@@ -233,9 +230,10 @@ if CLIENT then
 
     net.receive( "ProjectileLauncherParams", function()
         launcherSpeed = net.readFloat()
-        launcherGravity = net.readFloat()
-        launcherAngles = net.readAngle()
-        launcherPos = net.readVector()
+        if isValid( trajTurret ) then
+            launcherAngles = trajTurret:getAngles()
+            launcherPos = trajTurret:getPos()
+        end
     end )
 
     net.receive( "InitDriverClient", function( len )
@@ -243,11 +241,10 @@ if CLIENT then
         trajTurretBody = net.readEntity()
 
         hook.add( "PostDrawOpaqueRenderables", "GlideProjTrajHud", function()
-            -- This launcher model appears to fire along local Up, not Forward.
             local dir = launcherAngles:getUp()
             local pos = launcherPos + dir * 10
             local vel = dir * launcherSpeed
-            local g = Vector( 0, 0, -launcherGravity )
+            local g = Vector( 0, 0, -GRAVITY )
             local lastPos = pos
             local filter = buildClientTraceFilter()
             render.setColor( colGreen )
