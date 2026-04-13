@@ -1,0 +1,424 @@
+--@name RGBA_Encoded_Chat
+--@author desu
+--@shared
+
+-- This chip tries to communicate in RGBA and looks for other chips like it that are also communicating in RGBA.
+-- This chip uses the ASCII values of your messages to create RGBA colors
+-- then it makes a specific sound and flashes the colors at a specific rate
+-- if another chip hears the sound and can see the colors it will display the message on that chip's screen.
+
+if SERVER then
+    -- selectedFrequency is actually a delay between tx color changes and rx interpretation of color changes
+    -- It gets divided by 1000 and that is the delay between color flashes
+    -- SMALLER NUMBER = FASTER BLINK BLINK, TOO MUCH BLINK BLINK BAAD, INACCURATE MESSAGE RECEIVE IF BLINK TOO FAST
+    local selectedFrequency = 120
+
+    -- If ignoreIncorrectFrequency is false you'll get messages from chips on other tx/rx rates but messages will jumble, be cut off, or repeat
+    -- chat usernames will never jumble, we cheat and grab them from a wirelink to avoid problems (moderation, etc)
+    -- FALSE = SEE MESSED UP MESSAGE, NO GOOD, VERY BAD
+    local ignoreIncorrectFrequency = true
+
+    --------------------------------------
+
+    local chip = chip()
+    local chipWirelink = chip:getWirelink()
+    local keyboardEnt
+    local keyboardWirelink
+    
+    local function setRGBA( r, g, b, a )
+        local col = Color( r, g, b, a )
+        chip:setColor( col )
+    end
+
+    -- It's easier for padding if these digits are separate to begin with
+    local function encodeStringToMixedRadixDigits( str )
+        local out = {}
+        local k = 0
+
+        for i = 1, #str do
+            local b = string.byte( str, i )
+            k = k + 1
+            out[k] = math.floor( b / 100 )
+            k = k + 1
+            out[k] = math.floor( (b % 100) / 10 )
+            k = k + 1
+            out[k] = b % 10
+        end
+
+        return out
+    end
+
+    -- v = t0*100 + t1*10 + t2 is the inverse of the math in encodeStringToMixedRadixDigits
+    -- since we separated the digits to begin with we need this to put them back together
+    local function tripletChannel( t, j )
+        return t[j] * 100 + t[j + 1] * 10 + t[j + 2]
+    end
+
+    -- Pads to a multiple of 12, then forms four groups of three digits
+    -- each groups of digits are one character from our original message and each group is one of our R, G, B, or A values
+    -- so 4 characters max per color
+    local function mixedRadixDigitsToRGBAValues( digits )
+        local n = #digits
+        local pad = (12 - (n % 12)) % 12
+        local t = {}
+
+        for i = 1, n do
+            t[i] = digits[i]
+        end
+
+        for i = 1, pad do
+            t[n + i] = 0
+        end
+
+        local chunks = {}
+
+        for base = 1, #t, 12 do
+            chunks[#chunks + 1] = {
+                r = tripletChannel( t, base ),
+                g = tripletChannel( t, base + 3 ),
+                b = tripletChannel( t, base + 6 ),
+                a = tripletChannel( t, base + 9 ),
+            }
+        end
+
+        return chunks
+    end
+
+    local function encodeStringToRGBAChunks( str )
+        return mixedRadixDigitsToRGBAValues( encodeStringToMixedRadixDigits( str ) )
+    end
+
+
+
+    -- Flatten R, G, B, A chunks back to mixed-radix digits
+    local function rgbaChunksToMixedRadixDigits( chunks )
+        local out = {}
+        local k = 0
+
+        for _, c in ipairs( chunks ) do
+            for _, v in ipairs( { c.r, c.g, c.b, c.a } ) do
+                k = k + 1
+                out[k] = math.floor( v / 100 )
+                k = k + 1
+                out[k] = math.floor( (v % 100) / 10 )
+                k = k + 1
+                out[k] = v % 10
+            end
+        end
+
+        return out
+    end
+
+    -- some checks then v = t0*100 + t1*10 + t2 again then string.char yay
+    local function mixedRadixDigitsToString( digits, byteCount )
+        local n
+        if not byteCount then return end
+
+        n = byteCount * 3
+        assert( n <= #digits, "byteCount too large for digit buffer" )
+
+        if n == 0 then
+            return ""
+        end
+
+        assert( n % 3 == 0, "digit length must be a multiple of 3" )
+
+        local parts = {}
+
+        for i = 1, n, 3 do
+            parts[#parts + 1] = string.char( tripletChannel( digits, i ) )
+        end
+
+        return table.concat( parts )
+    end
+
+    local function decodeRGBAChunksToString( chunks, byteCount )
+        return mixedRadixDigitsToString( rgbaChunksToMixedRadixDigits( chunks ), byteCount )
+    end
+
+    local flashSeq = 0
+
+
+    -- Gets our expected number of chunks from byteCount
+    local function byteCountToChunkCount( byteCount )
+        return math.ceil( (byteCount * 3) / 12 )
+    end
+
+    --- Does our encoding from above then steps through the colors with some timers
+    -- the emitSound here is used with our EntityEmitSound hook below to detect when another chip is communicating
+    -- we also set our chip's to our message length, this is our byteCount
+    local function broadcastMessage( msg, intervalSec, restoreColor )
+        intervalSec = intervalSec or selectedFrequency / 1000
+        restoreColor = restoreColor or Color( 255, 255, 255, 255 )
+
+        chip:emitSound( "garrysmod/ui_return.wav", 72, selectedFrequency, 0.5, CHAN_AUTO, 26 )
+        chip:setMass( #msg )
+        
+        flashSeq = flashSeq + 1
+        local seq = flashSeq
+
+        local chunks = encodeStringToRGBAChunks( msg )
+        local n = #chunks
+
+        if n == 0 then
+            if chip:isValid() then
+                chip:setColor( restoreColor )
+            end
+
+            return
+        end
+
+        for i = 1, n do
+            local c = chunks[i]
+            timer.simple( (i - 1) * intervalSec, function()
+                if seq ~= flashSeq or not chip:isValid() then
+                    return
+                end
+
+                setRGBA( c.r, c.g, c.b, c.a )
+            end )
+        end
+
+        timer.simple( n * intervalSec, function()
+            if seq ~= flashSeq or not chip:isValid() then
+                return
+            end
+
+            chip:setColor( restoreColor )
+            chip:setMass( 0 )
+        end )
+    end
+
+    -- Concatenates the flashing from broadcastMessage and decodes it
+    -- also gets the byteCount from the target's mass
+    local function receiveBroadcastMessage( ent, intervalSec, onDone )
+        if not isValid( ent ) then return nil end
+
+        intervalSec = intervalSec or selectedFrequency / 1000
+
+        local byteCount = math.floor( ent:getMass() or 0 )
+        if byteCount <= 0 then
+            if onDone then onDone( "" ) end
+            return ""
+        end
+
+        local chunkCount = byteCountToChunkCount( byteCount )
+        local chunks = {}
+
+        for i = 1, chunkCount do
+            timer.simple( (i - 1) * intervalSec, function()
+                local c = ent:getColor()
+                chunks[i] = { r = c.r, g = c.g, b = c.b, a = c.a }
+            end )
+        end
+
+        timer.simple( chunkCount * intervalSec + 0.01, function()
+            local decoded = decodeRGBAChunksToString( chunks, byteCount )
+            if onDone then onDone( decoded ) end
+        end )
+
+        return nil
+    end
+
+
+    -- Displaying our own input on our screen
+    local function outputInputField( str )
+        net.start( "inputMsg" )
+        net.writeString( str )
+        net.sendPVS( chip:getPos() )
+    end
+
+    -- Checks for the enter key (10) and clears our input field when it's detected
+    local function checkReturn()
+        local keys = wire.readOutput( keyboardEnt, "ActiveKeys")
+        for i = 1, #keys do
+            if keys[i] == 10 then
+                outputInputField("")
+                return true
+            end
+        end
+        return false
+    end
+
+    -- When we broadcast our message we also need to reset our wire keyboard's output string
+    -- and tell the client a message has been sent so we can update our screen
+    local function startBroadcastMessage( str )
+        wire.triggerInput( keyboardEnt, "Reset Output String", 1 )
+        str = string.gsub( str, "\n" , "" )
+        broadcastMessage( str )
+        net.start( "sentMsg" )
+        net.sendPVS( chip:getPos() )
+    end
+
+    wire.adjustInputs( {"In", "User"}, {"string", "entity"} )
+
+    hook.add( "Input", "WireInput", function(name, value)
+        if name == "In" then
+            if #value > 0 and value ~= nil then
+                outputInputField( value )
+                if keyboardEnt and checkReturn() then
+                    startBroadcastMessage( value )
+                    return 
+                end
+            end
+            keyboardEnt = chipWirelink:getWiredTo( name )
+            if not isValid( keyboardEnt ) then return end
+            keyboardWirelink = keyboardEnt:getWirelink()
+        end
+    end )
+
+    -- When we hear the very specific sound we start trying to receive a broadcast
+    hook.add( "EntityEmitSound", "TransmitListen", function( data )
+        if data.SoundName ~= "garrysmod/ui_return.wav" or 
+        data.Volume ~= 0.5 or data.SoundLevel ~= 72 or
+        data.DSP ~= 26 or 
+        ( ignoreIncorrectFrequency and data.Pitch ~= selectedFrequency ) then return end
+
+        local ent = data.Entity
+        if ent ~= chip then
+            timer.simple( 0.01, function()
+                local user = wire.readInput( ent, "User" )
+                if not isValid( user ) then return end
+                receiveBroadcastMessage( ent, nil, function( msg )
+                    net.start( "receivedMsg" )
+                    net.writeEntity( user )
+                    net.writeString( msg )
+                    net.sendPVS( chip:getPos() )
+                end )
+            end )
+        end
+    end )
+    
+else
+    local inputField = ""
+    local pendingSentText = nil
+    -- { sender = string, text = string }
+    local chatLog = {}
+    local col = Color( 100, 255, 100, 255 )
+    local font = render.createFont('FontAwesome', 42, 800, false, false, true, true, 0, false, 0)
+    local padding = 8
+    local maxTextWidth = 512 - padding * 2
+
+    local function wrapText( text, maxWidth )
+        local lines = {}
+        local currentLine = ""
+
+        local function pushLine()
+            lines[#lines + 1] = currentLine
+            currentLine = ""
+        end
+
+        for paragraph in (text .. "\n"):gmatch("(.-)\n") do
+            if paragraph == "" then
+                if currentLine ~= "" then
+                    pushLine()
+                end
+                lines[#lines + 1] = ""
+            else
+                for word in paragraph:gmatch("%S+") do
+                    local testLine = currentLine == "" and word or (currentLine .. " " .. word)
+                    local testWidth = render.getTextSize( testLine )
+
+                    if testWidth <= maxWidth then
+                        currentLine = testLine
+                    else
+                        if currentLine ~= "" then
+                            pushLine()
+                        end
+
+                        if render.getTextSize( word ) <= maxWidth then
+                            currentLine = word
+                        else
+                            local fragment = ""
+                            for i = 1, #word do
+                                local ch = word:sub( i, i )
+                                local testFragment = fragment .. ch
+                                if render.getTextSize( testFragment ) > maxWidth and fragment ~= "" then
+                                    lines[#lines + 1] = fragment
+                                    fragment = ch
+                                else
+                                    fragment = testFragment
+                                end
+                            end
+                            currentLine = fragment
+                        end
+                    end
+                end
+                if currentLine ~= "" then
+                    pushLine()
+                end
+            end
+        end
+
+        if #lines == 0 then
+            lines[1] = ""
+        end
+
+        return lines
+    end
+
+    hook.add( "render", "RenderHook", function()
+        render.setFont( font )
+        render.setColor( col )
+        local _, lineHeight = render.getTextSize( "W" )
+        local inputGap = 4
+
+        local inputLines = wrapText( inputField, maxTextWidth )
+        local inputBlockH = #inputLines * lineHeight
+        local logBottomY = 512 - padding - inputBlockH - inputGap
+        local logTopY = padding
+        local maxLogLines = math.max( 0, math.floor( ( logBottomY - logTopY ) / lineHeight ) )
+
+        local logLines = {}
+        for _, entry in ipairs( chatLog ) do
+            local receivedDisplay = "<" .. entry.sender .. ">: " .. entry.text
+            local wrapped = wrapText( receivedDisplay, maxTextWidth )
+            for i = 1, #wrapped do
+                logLines[#logLines + 1] = wrapped[i]
+            end
+        end
+
+        local logStart = 1
+        if #logLines > maxLogLines then
+            logStart = #logLines - maxLogLines + 1
+        end
+        for i = logStart, #logLines do
+            local y = logTopY + ( i - logStart ) * lineHeight
+            render.drawText( padding, y, logLines[i], TEXT_ALIGN.LEFT )
+        end
+
+        for i = #inputLines, 1, -1 do
+            local linesFromBottom = #inputLines - i
+            local y = 512 - padding - lineHeight * ( linesFromBottom + 1 )
+            render.drawText( padding, y, inputLines[i], TEXT_ALIGN.LEFT )
+        end
+    end )
+
+    net.receive( "inputMsg", function()
+        local newVal = net.readString()
+        if newVal == "" and inputField ~= "" then
+            pendingSentText = string.gsub( inputField, "\n" , "" )
+        end
+        inputField = newVal
+    end )
+
+    net.receive( "sentMsg", function()
+        if pendingSentText and pendingSentText ~= "" then
+            local ply = player()
+            local sender = isValid( ply ) and ply:getName() or "You"
+            chatLog[#chatLog + 1] = { sender = sender, text = pendingSentText }
+        end
+        pendingSentText = nil
+    end )
+
+    net.receive( "receivedMsg", function()
+        local incomingMsgUser = net.readEntity()
+        local msg = net.readString()
+        local sender = "Unknown"
+        if isValid( incomingMsgUser ) then
+            sender = incomingMsgUser:getName()
+        end
+        chatLog[#chatLog + 1] = { sender = sender, text = msg }
+    end )
+
+end
