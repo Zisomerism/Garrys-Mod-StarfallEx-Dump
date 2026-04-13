@@ -292,8 +292,18 @@ if SERVER then
 else
     local inputField = ""
     local pendingSentText = nil
-    -- { sender = string, text = string }
+    --- Seconds until a whole chat message (all wrapped lines) is dropped.
+    local CHAT_MESSAGE_LIFETIME_SEC = 10
+    -- { sender = string, text = string, addedAt = number }
     local chatLog = {}
+    local CHAT_LOG_MAX_MESSAGES = 9
+
+    local function pushChatEntry( entry )
+        chatLog[#chatLog + 1] = entry
+        while #chatLog > CHAT_LOG_MAX_MESSAGES do
+            table.remove( chatLog, 1 )
+        end
+    end
     local col = Color( 100, 255, 100, 255 )
     local font = render.createFont('FontAwesome', 42, 800, false, false, true, true, 0, false, 0)
     local padding = 8
@@ -369,13 +379,20 @@ else
         local logTopY = padding
         local maxLogLines = math.max( 0, math.floor( ( logBottomY - logTopY ) / lineHeight ) )
 
+        local now = timer.curtime()
         local logLines = {}
         for _, entry in ipairs( chatLog ) do
-            local receivedDisplay = "<" .. entry.sender .. ">: " .. entry.text
-            local wrapped = wrapText( receivedDisplay, maxTextWidth )
-            for i = 1, #wrapped do
-                logLines[#logLines + 1] = wrapped[i]
+            if now < entry.addedAt + CHAT_MESSAGE_LIFETIME_SEC then
+                local receivedDisplay = "<" .. entry.sender .. ">: " .. entry.text
+                local wrapped = wrapText( receivedDisplay, maxTextWidth )
+                for i = 1, #wrapped do
+                    logLines[#logLines + 1] = wrapped[i]
+                end
             end
+        end
+
+        while #chatLog > 0 and now >= chatLog[1].addedAt + CHAT_MESSAGE_LIFETIME_SEC do
+            table.remove( chatLog, 1 )
         end
 
         local logStart = 1
@@ -406,7 +423,7 @@ else
         if pendingSentText and pendingSentText ~= "" then
             local ply = player()
             local sender = isValid( ply ) and ply:getName() or "You"
-            chatLog[#chatLog + 1] = { sender = sender, text = pendingSentText }
+            pushChatEntry( { sender = sender, text = pendingSentText, addedAt = timer.curtime() } )
         end
         pendingSentText = nil
     end )
@@ -418,7 +435,7 @@ else
         if isValid( incomingMsgUser ) then
             sender = incomingMsgUser:getName()
         end
-        chatLog[#chatLog + 1] = { sender = sender, text = msg }
+        pushChatEntry( { sender = sender, text = msg, addedAt = timer.curtime() } )
     end )
 
 end
