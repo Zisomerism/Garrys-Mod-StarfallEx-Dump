@@ -7,7 +7,6 @@ local dmg = 200
 local RADIUS = 500
 local SPEED = 2000
 local GRAVITY = 600
-local DROP_COMP_MULT = 0.5
 
 local CAMERA_PITCH = 80
 local CAMERA_Y_OFFSET = 400
