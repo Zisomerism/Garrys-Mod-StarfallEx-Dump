@@ -1,4 +1,5 @@
 --@name vehicles_util/glide projectile mortar
+--@author desu
 --@shared
 
 local DELAY = 1
