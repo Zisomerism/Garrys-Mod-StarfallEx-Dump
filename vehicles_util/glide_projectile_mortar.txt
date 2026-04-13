@@ -1,5 +1,4 @@
 --@name vehicles_util/glide projectile mortar
---@author desu
 --@shared
 
 local DELAY = 1
@@ -7,9 +6,10 @@ local dmg = 200
 local RADIUS = 500
 local SPEED = 2000
 local GRAVITY = 600
+local DROP_COMP_MULT = 0.5
 
 local CAMERA_PITCH = 80
-local CAMERA_Y_OFFSET = 500
+local CAMERA_Y_OFFSET = 400
 local CAMERA_Z_OFFSET = 2000
 
 local colRed, colGreen = Color( 255, 50, 50 ), Color( 50, 255, 50 )
@@ -123,6 +123,14 @@ if SERVER then
         end )
     end
 
+    local function cleanupDriver( driver )
+        net.start( "CleanupDriverClient" )
+        net.send( Driver, false )
+        enableHud( Driver, false )
+        turret:setColor( colRed )
+        driver:clearPVSPoints()
+    end
+
     wire.adjustInputs( {"Turret", "TurretBody", "PodController", "Active", "Driver", "W", "A", "S", "D", "R", "Space", "Alt", "Shift", "PrevWeapon", "NextWeapon", "Mouse1", "Mouse2", "Toggle"}, {"entity", "entity", "entity", "number", "entity", "number", "number", "number", "number", "number", "number", "number", "number", "number", "number", "number", "number", "number"} )
     hook.add("Input", "HandleEntityInput", function(name, value)
         if name == "Turret" and isValid( value ) then
@@ -149,10 +157,7 @@ if SERVER then
                 CamAng = CamAng or turret:getAngles()
                 projParamTime = timer.curtime()
             elseif isValid( Driver ) then
-                net.start( "CleanupDriverClient" )
-                net.send( Driver, false )
-                enableHud( Driver, false )
-                turret:setColor( colRed )
+                cleanupDriver( Driver )
             end
         elseif name == "W" then
             W = value
@@ -201,6 +206,9 @@ if SERVER then
             turretBody:setAngles( eyes )
             camHolo:setPos( ( predictedHitPos - Angle( 0, Driver:getEyeAngles().y, 0 ):getForward() * CAMERA_Y_OFFSET ) + Vector( 0, 0, CAMERA_Z_OFFSET ) ) 
             camHolo:setAngles( Angle( CAMERA_PITCH, Driver:getEyeAngles().y, 0 ) )
+            if camActive then
+                Driver:setPVSPoint( 1, predictedHitPos )
+            end
         end
 
         local t = timer.curtime()
@@ -209,6 +217,7 @@ if SERVER then
             updatePredictedHitPos()
             net.start( "ProjectileLauncherParams" )
             net.writeFloat( SPEED )
+            net.writeAngle( turret:getAngles() )
             net.send( Driver, false )
         end
     end )
@@ -230,13 +239,13 @@ if CLIENT then
 
     net.receive( "ProjectileLauncherParams", function()
         launcherSpeed = net.readFloat()
+        launcherAngles = net.readAngle()
         if isValid( trajTurret ) then
-            launcherAngles = trajTurret:getAngles()
             launcherPos = trajTurret:getPos()
         end
     end )
 
-    net.receive( "InitDriverClient", function( len )
+    net.receive( "InitDriverClient", function()
         trajTurret = net.readEntity()
         trajTurretBody = net.readEntity()
 
