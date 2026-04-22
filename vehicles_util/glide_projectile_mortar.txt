@@ -10,6 +10,7 @@
 -- Using a parent tool of some kind, parent the Glide Projectile Launcher to the prop you wired TurretBody to.
 -- Make sure the Pod Controller is connected to the chair and get in...
 
+-- adjustable vars
 local DELAY = 1
 local dmg = 200
 local RADIUS = 500
@@ -21,19 +22,21 @@ local CAMERA_PITCH = 80
 local CAMERA_Y_OFFSET = 400
 local CAMERA_Z_OFFSET = 2000
 
-local searchRadius = 4096
-local inRangeDistSqr = 2048
-local autofireTime = 0
-local autofireDelay = 2
-local searchResults = {}
-local PIDAngleOutput = Angle( 0, 0, 0 )
-local PIDSpeedOutput = 0
-local targetInRange = false
-
-local colRed, colGreen, colBlue, colYellow = Color( 255, 50, 50 ), Color( 50, 255, 50 ), Color( 50, 200, 255 ), Color( 255, 255, 50 )
+local searchRadius = 2048
+local inRangeDistSqr = 1024
+local autoAimThinkDelay = 3
+local autoAimNoShotHoldDelay = 6
 
 local simSteps = 128
 local simDt = 0.08
+--
+
+local searchResults = {}
+local targetInRange = false
+local autoAimThinkTime = 0
+local autoAimNoShotHoldTime = 0 
+
+local colRed, colGreen, colBlue, colYellow = Color( 255, 50, 50 ), Color( 50, 255, 50 ), Color( 50, 200, 255 ), Color( 255, 255, 50 )
 
 local turret, turretBody, podController, camController, isActive, Driver, Mass
 local W, A, S, D, Space, Alt, Shift, MouseL, MouseR, toggleHitPosAiming, toggleDefendArea, AimPos
@@ -42,6 +45,11 @@ local predictedHitPos = Vector( 0, 0, 0 )
 local projParamTime = 0
 local projParamDelay = 0.08
 if SERVER then
+
+    local function outOfBudget( ratio )
+        ratio = ratio or 0.9
+        return cpuAverage() > cpuMax() * ratio or cpuUsed() > cpuMax() * ratio
+    end
 
     local function setTurretCol()
         if toggleDefendArea == 1 then
@@ -64,25 +72,60 @@ if SERVER then
         return f
     end
 
+    local predSim = {
+        active = false,
+        i = 1,
+        pos = Vector( 0, 0, 0 ),
+        vel = Vector( 0, 0, 0 ),
+        g = Vector( 0, 0, 0 ),
+        lastPos = Vector( 0, 0, 0 ),
+        filter = nil
+    }
+
     local function updatePredictedHitPos()
-        if not isValid( turret ) then return end
-        local dir = turret:getAngles():getUp()
-        local pos = turret:getPos() + dir * 10
-        local vel = dir * SPEED
-        local g = Vector( 0, 0, -GRAVITY )
-        local lastPos = pos
-        local filter = buildProjectileTraceFilter()
-        for i = 1, simSteps do
+        if not isValid( turret ) then
+            predSim.active = false
+            return
+        end
+
+        if not predSim.active then
+            local dir = turret:getAngles():getUp()
+            predSim.pos = turret:getPos() + dir * 10
+            predSim.vel = dir * SPEED
+            predSim.g = Vector( 0, 0, -GRAVITY )
+            predSim.lastPos = predSim.pos
+            predSim.filter = buildProjectileTraceFilter()
+            predSim.i = 1
+            predSim.active = true
+        end
+
+        local pos, vel, g = predSim.pos, predSim.vel, predSim.g
+        local lastPos = predSim.lastPos
+        local filter = predSim.filter or buildProjectileTraceFilter()
+
+        for i = predSim.i, simSteps do
             local t = i * simDt
+            -- one of the most expensive part of this script comes after this if statement
+            -- i found this works best here but its probably not going to be perfect
+            if outOfBudget() then 
+                predSim.i = i + 1
+                predSim.lastPos = lastPos
+                return
+            end
+
             local nextPos = pos + vel * t + g * ( 0.5 * t * t )
             local tr = trace.line( lastPos, nextPos, filter )
             if tr.Hit then
                 predictedHitPos = tr.HitPos
+                predSim.active = false
                 return
             end
             lastPos = nextPos
+
         end
+
         predictedHitPos = lastPos
+        predSim.active = false
     end
 
     local function initTurret()
@@ -190,11 +233,12 @@ if SERVER then
         if toggleHitPosAiming == 1 then
             if not isValid( turret ) or not isValid( turretBody ) then return end
             if not targetPos then return end
+            if outOfBudget() then return turretBody:getAngles() end
 
             local dist = targetPos:getDistanceSqr( predictedHitPos )
             if dist < inRangeDistSqr then
                 targetInRange = true
-                return
+                return turretBody:getAngles()
             else
                 targetInRange = false
             end
@@ -233,7 +277,7 @@ if SERVER then
             local stepY = cmdY * dt
 
             local cur = turretBody:getAngles()
-            PIDAngleOutput = Angle( cur.p + stepP, cur.y + stepY, cur.r )
+            return Angle( cur.p + stepP, cur.y + stepY, cur.r )
         end
     end
 
@@ -253,7 +297,7 @@ if SERVER then
                 results[#results + 1] = v
             end
         end
-        searchResults = results
+        searchResults = find.sortByClosest( results, predictedHitPos )
     end 
 
     local function toggleHitPosAim()
@@ -351,31 +395,37 @@ if SERVER then
     end)
 
     wire.adjustOutputs( {"Fire", "Delay", "Damage", "Radius", "Speed", "Gravity", "ToggleHitPosAiming", "ToggleDefendArea"}, {"number", "number", "number", "number", "number", "number", "number", "number"} )
-
+    
     hook.add("Think", "ControlThink", function()
         if isActive ~= 1 and toggleHitPosAiming ~= 1 then return end
         
         if isValid( turretBody ) then
+            if outOfBudget() then return end
             if toggleDefendArea == 1 then
                 local target = searchResults[1]
                 if isValid( target ) then
                     local targetPos = target:getPos()
-                    PIDControl( targetPos )
-                    turretBody:setAngles( PIDAngleOutput )
-                    if timer.curtime() >= autofireTime and targetInRange then
-                        autofireTime = timer.curtime() + autofireDelay
+                    local outang = PIDControl( targetPos )
+                    turretBody:setAngles( outang )
+                    if timer.curtime() >= autoAimNoShotHoldTime then
+                        autoAimNoShotHoldTime = timer.curtime() + autoAimNoShotHoldDelay
+                        newTargets()
+                    end
+                    if timer.curtime() >= autoAimThinkTime and targetInRange then
+                        autoAimThinkTime = timer.curtime() + autoAimThinkDelay
+                        autoAimNoShotHoldTime = timer.curtime() + autoAimNoShotHoldDelay
                         fire()
                     end
                 else
-                    if timer.curtime() >= autofireTime then
-                        autofireTime = timer.curtime() + autofireDelay
+                    if timer.curtime() >= autoAimThinkTime then
+                        autoAimThinkTime = timer.curtime() + autoAimThinkDelay
                         newTargets()
                     end
                 end
             elseif toggleHitPosAiming == 1 then
                 if AimPos ~= nil then
-                    PIDControl( AimPos )
-                    turretBody:setAngles( PIDAngleOutput )
+                    local outang = PIDControl( AimPos )
+                    turretBody:setAngles( outang )
                 end
             else
                 if not isValid( Driver ) then return end
@@ -393,6 +443,7 @@ if SERVER then
         if not isValid( turret ) then return end
         local t = timer.curtime()
         if t >= projParamTime + projParamDelay then
+            if outOfBudget( 0.8 ) then return end
             projParamTime = t
             updatePredictedHitPos()
             net.start( "ProjectileLauncherParams" )
