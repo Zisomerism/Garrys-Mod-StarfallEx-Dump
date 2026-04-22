@@ -2,28 +2,58 @@
 --@author desu
 --@shared
 
+-- Spawn this chip and a Pod Controller on a chair
+-- Wire "PodController [ENTITY]" from this chip to "Create Entity [ENTITY]" on a Pod Controller
+-- Spawn a Glide Projectile Launcher and some kind of prop to attach it to
+-- Wire "Turret [ENTITY]" from this chip to "Create Entity [ENTITY]" on the Glide Projectile Launcher
+-- Wire "TurretBody [ENTITY]" from this chip to "Create Entity [ENTITY]" on the prop the Glide Projectile Launcher will be attached to
+-- Using a parent tool of some kind, parent the Glide Projectile Launcher to the prop you wired TurretBody to.
+-- Make sure the Pod Controller is connected to the chair and get in...
+
 local DELAY = 1
 local dmg = 200
 local RADIUS = 500
 local SPEED = 2000
 local GRAVITY = 600
+local DROP_COMP_MULT = 0.5
 
 local CAMERA_PITCH = 80
 local CAMERA_Y_OFFSET = 400
 local CAMERA_Z_OFFSET = 2000
 
-local colRed, colGreen = Color( 255, 50, 50 ), Color( 50, 255, 50 )
+local searchRadius = 4096
+local inRangeDistSqr = 2048
+local autofireTime = 0
+local autofireDelay = 2
+local searchResults = {}
+local PIDAngleOutput = Angle( 0, 0, 0 )
+local PIDSpeedOutput = 0
+local targetInRange = false
+
+local colRed, colGreen, colBlue, colYellow = Color( 255, 50, 50 ), Color( 50, 255, 50 ), Color( 50, 200, 255 ), Color( 255, 255, 50 )
 
 local simSteps = 128
 local simDt = 0.08
 
 local turret, turretBody, podController, camController, isActive, Driver, Mass
-local W, A, S, D, Space, Alt, Shift, MouseL, MouseR, ToggleA, ToggleB
+local W, A, S, D, Space, Alt, Shift, MouseL, MouseR, toggleHitPosAiming, toggleDefendArea, AimPos
 local projectileTemp
 local predictedHitPos = Vector( 0, 0, 0 )
 local projParamTime = 0
 local projParamDelay = 0.08
 if SERVER then
+
+    local function setTurretCol()
+        if toggleDefendArea == 1 then
+            turret:setColor( colBlue )
+        elseif toggleHitPosAiming == 1 and isActive == 1 then
+            turret:setColor( colYellow )
+        elseif isActive == 1 then
+            turret:setColor( colGreen )
+        else
+            turret:setColor( colRed )
+        end
+    end
 
     local function buildProjectileTraceFilter()
         local f = { chip() }
@@ -87,7 +117,8 @@ if SERVER then
             wire.create( chip(), podController, "Mouse2", "Mouse2", 0 )
             wire.create( chip(), podController, "PrevWeapon", "PrevWeapon", 0 )
             wire.create( chip(), podController, "NextWeapon", "NextWeapon", 0 )
-            wire.create( chip(), podController, "Toggle", "Light", 0 )
+            wire.create( chip(), podController, "Light", "Light", 0 )
+            wire.create( chip(), podController, "AimPos", "AimPos", 0 )
         end
     end
 
@@ -123,15 +154,143 @@ if SERVER then
         end )
     end
 
+    local overload_fire = fire
+    local function fire( value )
+        if isnumber( value ) then
+            return overload_fire( value )
+        end
+
+        overload_fire( 1 )
+        timer.simple( 0.05, function()
+            overload_fire( 0 )
+        end )
+    end
+
+    local function angleDeltaDeg( a, b )
+        local d = ( a - b ) % 360
+        if d > 180 then d = d - 360 end
+        return d
+    end
+
+    local function clamp( x, lo, hi )
+        return x < lo and lo or ( x > hi and hi or x )
+    end
+
+    local pid = {
+        kp_p = 6.0, ki_p = 0.0, kd_p = 1.5,
+        kp_y = 6.0, ki_y = 0.0, kd_y = 1.5,
+        iClamp = 35,
+        outClamp = 20,
+        lastT = nil,
+        iP = 0, iY = 0,
+        lastErrP = 0, lastErrY = 0
+    }
+
+    local function PIDControl( targetPos )
+        if toggleHitPosAiming == 1 then
+            if not isValid( turret ) or not isValid( turretBody ) then return end
+            if not targetPos then return end
+
+            local dist = targetPos:getDistanceSqr( predictedHitPos )
+            if dist < inRangeDistSqr then
+                targetInRange = true
+                return
+            else
+                targetInRange = false
+            end
+
+            local t = timer.curtime()
+            local dt = pid.lastT and ( t - pid.lastT ) or 0
+            pid.lastT = t
+            if dt <= 0 or dt > 0.25 then dt = 0.02 end
+            pid.lastDt = dt
+
+            local origin = turret:getPos()
+            local toPred = predictedHitPos - origin
+            local toTgt = targetPos - origin
+            if toPred:getLengthSqr() < 1 or toTgt:getLengthSqr() < 1 then return end
+
+            local angPred = toPred:getNormalized():getAngle()
+            local angTgt = toTgt:getNormalized():getAngle()
+
+            local errP = angleDeltaDeg( angTgt.p, angPred.p )
+            local errY = angleDeltaDeg( angTgt.y, angPred.y )
+
+            pid.iP = clamp( pid.iP + errP * dt, -pid.iClamp, pid.iClamp )
+            pid.iY = clamp( pid.iY + errY * dt, -pid.iClamp, pid.iClamp )
+
+            local dErrP = ( errP - pid.lastErrP ) / dt
+            local dErrY = ( errY - pid.lastErrY ) / dt
+            pid.lastErrP, pid.lastErrY = errP, errY
+
+            local cmdP = pid.kp_p * errP + pid.ki_p * pid.iP + pid.kd_p * dErrP
+            local cmdY = pid.kp_y * errY + pid.ki_y * pid.iY + pid.kd_y * dErrY
+
+            cmdP = clamp( cmdP, -pid.outClamp, pid.outClamp )
+            cmdY = clamp( cmdY, -pid.outClamp, pid.outClamp )
+
+            local stepP = cmdP * dt
+            local stepY = cmdY * dt
+
+            local cur = turretBody:getAngles()
+            PIDAngleOutput = Angle( cur.p + stepP, cur.y + stepY, cur.r )
+        end
+    end
+
     local function cleanupDriver( driver )
         net.start( "CleanupDriverClient" )
         net.send( Driver, false )
         enableHud( Driver, false )
-        turret:setColor( colRed )
+        setTurretCol()
         driver:clearPVSPoints()
     end
 
-    wire.adjustInputs( {"Turret", "TurretBody", "PodController", "Active", "Driver", "W", "A", "S", "D", "R", "Space", "Alt", "Shift", "PrevWeapon", "NextWeapon", "Mouse1", "Mouse2", "Toggle"}, {"entity", "entity", "entity", "number", "entity", "number", "number", "number", "number", "number", "number", "number", "number", "number", "number", "number", "number", "number"} )
+    local function newTargets()
+        local results = {}
+        for _, v in pairs( find.inSphere( predictedHitPos, searchRadius ) ) do
+            if not v:isNPC() or v:getHealth() <= 0 then continue end
+            if v:isValid() then
+                results[#results + 1] = v
+            end
+        end
+        searchResults = results
+    end 
+
+    local function toggleHitPosAim()
+        toggleHitPosAiming = toggleHitPosAiming == 1 and 0 or 1
+        wire.ports["ToggleHitPosAiming"] = toggleHitPosAiming
+        setTurretCol()
+    end
+
+    local function toggleDefend()
+        toggleHitPosAim()
+        if toggleHitPosAiming == 1 then
+            newTargets()
+        end
+        toggleDefendArea = toggleDefendArea == 1 and 0 or 1
+        wire.ports["ToggleDefendArea"] = toggleDefendArea
+        setTurretCol()
+    end
+
+    local function adjustSpeed( positive )
+        local v = Shift == 1 and 2000 or 100 
+        if positive then
+            if SPEED + v <= 20000 then
+                SPEED = SPEED + v
+            else
+                SPEED = 20000
+            end
+        else
+            if SPEED >= v then
+                SPEED = SPEED - v
+            else
+                SPEED = 0
+            end
+        end
+        wire.ports["Speed"] = SPEED
+    end
+
+    wire.adjustInputs( {"Turret", "TurretBody", "PodController", "Active", "Driver", "W", "A", "S", "D", "R", "Space", "Alt", "Shift", "PrevWeapon", "NextWeapon", "Mouse1", "Mouse2", "Light", "AimPos"}, {"entity", "entity", "entity", "number", "entity", "number", "number", "number", "number", "number", "number", "number", "number", "number", "number", "number", "number", "number", "vector"} )
     hook.add("Input", "HandleEntityInput", function(name, value)
         if name == "Turret" and isValid( value ) then
             turret = value
@@ -153,7 +312,7 @@ if SERVER then
                 net.writeEntity( isValid( turretBody ) and turretBody or turret )
                 net.send( Driver, false )
                 enableHud( Driver, true )
-                turret:setColor( colGreen )
+                setTurretCol()
                 CamAng = CamAng or turret:getAngles()
                 projParamTime = timer.curtime()
             elseif isValid( Driver ) then
@@ -168,8 +327,7 @@ if SERVER then
         elseif name == "D" then
             D = value
         elseif name == "R" and value == 1 then
-            ToggleB = ToggleB == 1 and 0 or 1
-            wire.ports["ToggleB"] = ToggleB
+            toggleHitPosAim()
         elseif name == "Space" then
             Space = value
         elseif name == "Alt" then
@@ -182,28 +340,49 @@ if SERVER then
         elseif name == "Mouse2" and isValid( Driver ) then
             viewCam( value )
         elseif name == "PrevWeapon" then
-            SPEED = SPEED + 100
-            wire.ports["Speed"] = SPEED
+            if value == 1 then adjustSpeed( true ) end
         elseif name == "NextWeapon" then
-            if SPEED >= 100 then
-                SPEED = SPEED - 100
-            else
-                SPEED = 0
-            end
-            wire.ports["Speed"] = SPEED
-        elseif name == "Toggle" and value == 1 then
-            ToggleA = ToggleA == 1 and 0 or 1
-            wire.ports["ToggleA"] = ToggleA
+            if value == 1 then adjustSpeed( false ) end
+        elseif name == "Light" and value == 1 then
+            toggleDefend()
+        elseif name == "AimPos" and value ~= nil then
+            AimPos = value
         end
     end)
 
-    wire.adjustOutputs( {"Fire", "Delay", "Damage", "Radius", "Speed", "Gravity", "ToggleA", "ToggleB"}, {"number", "number", "number", "number", "number", "number", "number", "number"} )
+    wire.adjustOutputs( {"Fire", "Delay", "Damage", "Radius", "Speed", "Gravity", "ToggleHitPosAiming", "ToggleDefendArea"}, {"number", "number", "number", "number", "number", "number", "number", "number"} )
 
     hook.add("Think", "ControlThink", function()
-        if isActive == 0 or not isValid( Driver ) or not isValid( turret ) then return end
+        if isActive ~= 1 and toggleHitPosAiming ~= 1 then return end
+        
         if isValid( turretBody ) then
-            local eyes = Driver:getEyeAngles()
-            turretBody:setAngles( eyes )
+            if toggleDefendArea == 1 then
+                local target = searchResults[1]
+                if isValid( target ) then
+                    local targetPos = target:getPos()
+                    PIDControl( targetPos )
+                    turretBody:setAngles( PIDAngleOutput )
+                    if timer.curtime() >= autofireTime and targetInRange then
+                        autofireTime = timer.curtime() + autofireDelay
+                        fire()
+                    end
+                else
+                    if timer.curtime() >= autofireTime then
+                        autofireTime = timer.curtime() + autofireDelay
+                        newTargets()
+                    end
+                end
+            elseif toggleHitPosAiming == 1 then
+                if AimPos ~= nil then
+                    PIDControl( AimPos )
+                    turretBody:setAngles( PIDAngleOutput )
+                end
+            else
+                if not isValid( Driver ) then return end
+                local eyes = Driver:getEyeAngles()
+                turretBody:setAngles( eyes )
+            end
+            if not isValid( Driver ) then return end
             camHolo:setPos( ( predictedHitPos - Angle( 0, Driver:getEyeAngles().y, 0 ):getForward() * CAMERA_Y_OFFSET ) + Vector( 0, 0, CAMERA_Z_OFFSET ) ) 
             camHolo:setAngles( Angle( CAMERA_PITCH, Driver:getEyeAngles().y, 0 ) )
             if camActive then
@@ -211,6 +390,7 @@ if SERVER then
             end
         end
 
+        if not isValid( turret ) then return end
         local t = timer.curtime()
         if t >= projParamTime + projParamDelay then
             projParamTime = t
@@ -278,10 +458,12 @@ if CLIENT then
             local rows = {
                 { text = "Controls", color = colGreen, extraBelow = titleGap },
                 { text = "Left Mouse = Fire", color = colGreen },
+                { text = "Shift + Left Mouse = Shell Camera", color = colGreen },
                 { text = "Right Mouse = Artillery Camera", color = colGreen },
-                { text = "Mouse Wheel Up/Down = Adjust shell velocity", color = colGreen },
-                { text = "Shift = Shell Camera", color = colGreen },
-
+                { text = "MWheel Up/Down = Adjust shell velocity (+/- 100)", color = colGreen },
+                { text = "Shift + MWheel Up/Down = Adj shell vel (+/- 2000)", color = colGreen },
+                { text = "R (Toggle) = Hit Position Aiming", color = colGreen },
+                { text = "F (Toggle) = Defend Area", color = colGreen },
             }
             local totalH = 0
             for _, row in ipairs( rows ) do
