@@ -2,6 +2,21 @@
 --@author desu
 --@shared
 
+-- This chip can control a glide projectile turret from a pod controller in several modes:
+
+-- Default Mode:
+-- The turret will match the pitch and yaw of the pod controller.
+
+-- Hit Position Aiming Mode:
+-- The turret will aim at the aim hit position of the pod controller.
+
+-- Auto Aim Mode:
+-- The turret will automatically aim at the closest target in a sphere around current aim point.
+-- If the turret cannot find a direct line of sight to a target, it will attempt to aim with a ballistic trajectory to the target.
+-- If the turret is able to find a target, it will fire a projectile at the target.
+-- The turret will switch targets if it cannot get a good shot at the current target.
+
+-- Usage:
 -- Spawn this chip and a Pod Controller on a chair
 -- Wire "PodController [ENTITY]" from this chip to "Create Entity [ENTITY]" on a Pod Controller
 -- Spawn a Glide Projectile Launcher and some kind of prop to attach it to
@@ -10,35 +25,45 @@
 -- Using a parent tool of some kind, parent the Glide Projectile Launcher to the prop you wired TurretBody to.
 -- Make sure the Pod Controller is connected to the chair and get in...
 
--- adjustable vars
-local DELAY = 1
-local dmg = 200
-local RADIUS = 500
-local SPEED = 2000
-local GRAVITY = 600
-local DROP_COMP_MULT = 0.5
+-- edit these vars if you want ------------------------------------------------
+local defaultSpeed = 4000 -- default projectile
 
-local CAMERA_PITCH = 80
-local CAMERA_Y_OFFSET = 400
-local CAMERA_Z_OFFSET = 2000
+-- RMB artillery cam settings
+local artyCamPitch = 80
+local artyCamOffsetY = 400
+local artyCamOffsetZ = 2000
 
-local searchRadius = 2048
+-- auto aim settings
+local searchRadius = 8192
 local inRangeDistSqr = 1024
-local autoAimThinkDelay = 3
-local autoAimNoShotHoldDelay = 6
+local autoAimThinkDelay = 1
+local autoAimArcShotDelay = 6
+local autoAimTargetSwitchDelay = 20
+local autoAimSpeedFloor = 600
 
-local simSteps = 128
-local simDt = 0.08
---
+-- probably don't edit these vars ---------------------------------------------
+-- used for trajectory prediction
+local predictionSteps = 128 
+local predictionDt = 0.08
 
+-- glide projectile turret settings
+local glideTurretDelay = 3
+local glideTurretDamage = 200
+local glideTurretRadius = 500
+local glideTurretSpeed = defaultSpeed
+local glideTurretGravity = 600
+
+-- auto aim internal vars
 local searchResults = {}
 local targetInRange = false
 local autoAimThinkTime = 0
-local autoAimNoShotHoldTime = 0 
+local autoAimArcShotTime = 0 
+local autoAimTargetSwitchTime = 0 
+local autoAimArcPreferred = 0
 
 local colRed, colGreen, colBlue, colYellow = Color( 255, 50, 50 ), Color( 50, 255, 50 ), Color( 50, 200, 255 ), Color( 255, 255, 50 )
 
-local turret, turretBody, podController, camController, isActive, Driver, Mass
+local turret, turretBody, podController, isActive, Driver
 local W, A, S, D, Space, Alt, Shift, MouseL, MouseR, toggleHitPosAiming, toggleDefendArea, AimPos
 local projectileTemp
 local predictedHitPos = Vector( 0, 0, 0 )
@@ -61,6 +86,12 @@ if SERVER then
         else
             turret:setColor( colRed )
         end
+    end
+
+    local function angleDeltaDeg( a, b )
+        local d = ( a - b ) % 360
+        if d > 180 then d = d - 360 end
+        return d
     end
 
     local function buildProjectileTraceFilter()
@@ -91,8 +122,8 @@ if SERVER then
         if not predSim.active then
             local dir = turret:getAngles():getUp()
             predSim.pos = turret:getPos() + dir * 10
-            predSim.vel = dir * SPEED
-            predSim.g = Vector( 0, 0, -GRAVITY )
+            predSim.vel = dir * glideTurretSpeed
+            predSim.g = Vector( 0, 0, -glideTurretGravity )
             predSim.lastPos = predSim.pos
             predSim.filter = buildProjectileTraceFilter()
             predSim.i = 1
@@ -100,20 +131,19 @@ if SERVER then
         end
 
         local pos, vel, g = predSim.pos, predSim.vel, predSim.g
+        local halfG = g * 0.5
         local lastPos = predSim.lastPos
         local filter = predSim.filter or buildProjectileTraceFilter()
 
-        for i = predSim.i, simSteps do
-            local t = i * simDt
-            -- one of the most expensive part of this script comes after this if statement
-            -- i found this works best here but its probably not going to be perfect
-            if outOfBudget() then 
+        for i = predSim.i, predictionSteps do
+            local t = i * predictionDt
+            if outOfBudget( 0.5 ) then 
                 predSim.i = i + 1
                 predSim.lastPos = lastPos
                 return
             end
 
-            local nextPos = pos + vel * t + g * ( 0.5 * t * t )
+            local nextPos = pos + vel * t + halfG * ( t * t )
             local tr = trace.line( lastPos, nextPos, filter )
             if tr.Hit then
                 predictedHitPos = tr.HitPos
@@ -137,11 +167,11 @@ if SERVER then
             wire.create( turret, chip(), "Speed", "Speed", 0 )
             wire.create( turret, chip(), "Gravity", "Gravity", 0 )
         end
-        wire.ports["Delay"] = DELAY
-        wire.ports["Damage"] = dmg
-        wire.ports["Radius"] = RADIUS
-        wire.ports["Speed"] = SPEED
-        wire.ports["Gravity"] = GRAVITY
+        wire.ports["Delay"] = glideTurretDelay
+        wire.ports["Damage"] = glideTurretDamage
+        wire.ports["Radius"] = glideTurretRadius
+        wire.ports["Speed"] = glideTurretSpeed
+        wire.ports["Gravity"] = glideTurretGravity
     end
     
     local function initPod()
@@ -166,8 +196,15 @@ if SERVER then
     end
 
     local camHolo, camActive
+    local turretOffset = { p = nil, y = nil }
     local function initCam()
         camHolo = hologram.create( chip():getPos(), Angle( 0, 0, 0 ), "models/hunter/plates/plate.mdl", Vector( 0, 0, 0 ) )
+        if isValid( turret ) and isValid( turretBody ) then
+            local muzzleAng = turret:getAngles():getUp():getAngle()
+            local bodyAng = turretBody:getAngles()
+            turretOffset.p = angleDeltaDeg( muzzleAng.p, bodyAng.p )
+            turretOffset.y = angleDeltaDeg( muzzleAng.y, bodyAng.y )
+        end
     end
 
     local function viewCam( value )
@@ -182,6 +219,11 @@ if SERVER then
 
     local gunCam
     local function fire( value )
+        if value == nil then
+            fire( 1 )
+            timer.simple( 0.05, function() fire( 0 ) end )
+            return
+        end
         MouseL = value
         wire.ports["Fire"] = MouseL
         if value ~= 1 or not isValid( Driver ) or not isValid( turret ) then return end
@@ -197,88 +239,127 @@ if SERVER then
         end )
     end
 
-    local overload_fire = fire
-    local function fire( value )
-        if isnumber( value ) then
-            return overload_fire( value )
-        end
-
-        overload_fire( 1 )
-        timer.simple( 0.05, function()
-            overload_fire( 0 )
-        end )
-    end
-
-    local function angleDeltaDeg( a, b )
-        local d = ( a - b ) % 360
-        if d > 180 then d = d - 360 end
-        return d
-    end
-
     local function clamp( x, lo, hi )
         return x < lo and lo or ( x > hi and hi or x )
+    end
+
+    -- d = distance, h = height difference, v0 = velocity
+    local function ballisticHighArcPitchDeg( d, h, v0 )
+        if outOfBudget( 0.7 ) then return nil end
+        if d < 1 or v0 < 1 then return nil end
+        local v2 = v0 * v0
+        local inner = v2 * v2 - glideTurretGravity * ( glideTurretGravity * d * d + 2 * h * v2 )
+        -- Near the minimum muzzle speed for (d,h), float error makes inner slightly negative. Treat as 0.
+        if inner < 0 and inner > -0.01 then inner = 0 end
+        if inner < 0 then return nil end
+        local tanTheta = ( v2 + math.sqrt( inner ) ) / ( glideTurretGravity * d )
+        return -math.deg( math.atan( tanTheta ) )
     end
 
     local pid = {
         kp_p = 6.0, ki_p = 0.0, kd_p = 1.5,
         kp_y = 6.0, ki_y = 0.0, kd_y = 1.5,
         iClamp = 35,
-        outClamp = 20,
+        outClamp = 25,
         lastT = nil,
         iP = 0, iY = 0,
-        lastErrP = 0, lastErrY = 0
+        lastAngPredY = nil,
+        lastMeasP = nil,
+        wasArc = false,
     }
 
     local function PIDControl( targetPos )
-        if toggleHitPosAiming == 1 then
-            if not isValid( turret ) or not isValid( turretBody ) then return end
-            if not targetPos then return end
-            if outOfBudget() then return turretBody:getAngles() end
+        if toggleHitPosAiming ~= 1 then return end
+        if not isValid( turret ) or not isValid( turretBody ) then return end
+        if not targetPos then return turretBody:getAngles() end
+        if outOfBudget( 0.6 ) then return turretBody:getAngles() end
 
-            local dist = targetPos:getDistanceSqr( predictedHitPos )
-            if dist < inRangeDistSqr then
-                targetInRange = true
-                return turretBody:getAngles()
-            else
-                targetInRange = false
-            end
-
-            local t = timer.curtime()
-            local dt = pid.lastT and ( t - pid.lastT ) or 0
-            pid.lastT = t
-            if dt <= 0 or dt > 0.25 then dt = 0.02 end
-            pid.lastDt = dt
-
-            local origin = turret:getPos()
-            local toPred = predictedHitPos - origin
-            local toTgt = targetPos - origin
-            if toPred:getLengthSqr() < 1 or toTgt:getLengthSqr() < 1 then return end
-
-            local angPred = toPred:getNormalized():getAngle()
-            local angTgt = toTgt:getNormalized():getAngle()
-
-            local errP = angleDeltaDeg( angTgt.p, angPred.p )
-            local errY = angleDeltaDeg( angTgt.y, angPred.y )
-
-            pid.iP = clamp( pid.iP + errP * dt, -pid.iClamp, pid.iClamp )
-            pid.iY = clamp( pid.iY + errY * dt, -pid.iClamp, pid.iClamp )
-
-            local dErrP = ( errP - pid.lastErrP ) / dt
-            local dErrY = ( errY - pid.lastErrY ) / dt
-            pid.lastErrP, pid.lastErrY = errP, errY
-
-            local cmdP = pid.kp_p * errP + pid.ki_p * pid.iP + pid.kd_p * dErrP
-            local cmdY = pid.kp_y * errY + pid.ki_y * pid.iY + pid.kd_y * dErrY
-
-            cmdP = clamp( cmdP, -pid.outClamp, pid.outClamp )
-            cmdY = clamp( cmdY, -pid.outClamp, pid.outClamp )
-
-            local stepP = cmdP * dt
-            local stepY = cmdY * dt
-
-            local cur = turretBody:getAngles()
-            return Angle( cur.p + stepP, cur.y + stepY, cur.r )
+        local dist = targetPos:getDistanceSqr( predictedHitPos )
+        if dist < inRangeDistSqr then
+            targetInRange = true
+            return turretBody:getAngles()
+        else
+            targetInRange = false
         end
+
+        local cur = turretBody:getAngles()
+        local origin = turret:getPos()
+        local toTgt = targetPos - origin
+        if toTgt:getLengthSqr() < 1 then return cur end
+
+        local angTgt = toTgt:getNormalized():getAngle()
+        local d = Vector( toTgt.x, toTgt.y, 0 ):getLength()
+        local h = toTgt.z
+
+        -- Arc mode: direct analytic set using calibrated turretBody→muzzle offset.
+        -- Physics is exact (no drag, known gravity) so the formula and the sim agree perfectly.
+        if autoAimArcPreferred == 1 then
+            pid.wasArc = true
+            if not turretOffset.p then
+                return cur
+            end
+            local pArc = ballisticHighArcPitchDeg( d, h, glideTurretSpeed )
+            if not pArc then
+                return cur
+            end
+            return Angle( pArc - turretOffset.p, angTgt.y - turretOffset.y, cur.r )
+        end
+
+        -- Non-arc: PID drives predicted impact direction toward target LOS.
+        -- Reset state cleanly when transitioning out of arc.
+        if pid.wasArc then
+            pid.wasArc = false
+            pid.iP, pid.iY = 0, 0
+            pid.lastT = nil
+            pid.lastMeasP = nil
+            pid.lastAngPredY = nil
+        end
+
+        local t = timer.curtime()
+        local dt = pid.lastT and ( t - pid.lastT ) or 0
+        pid.lastT = t
+        if dt <= 0 or dt > 0.25 then dt = 0.02 end
+
+        local toPred = predictedHitPos - origin
+        if toPred:getLengthSqr() < 1 then return cur end
+
+        local angPred = toPred:getNormalized():getAngle()
+
+        local errP = angleDeltaDeg( angTgt.p, angPred.p )
+        local errY = angleDeltaDeg( angTgt.y, angPred.y )
+
+        -- Lateral yaw feedforward: converts XY miss distance into an extra yaw correction.
+        -- Helps at long range where a small angular error still means a large lateral miss.
+        if d > 1 then
+            local miss = targetPos - predictedHitPos
+            -- 2D cross product of aim direction (toTgt.xy / d) with miss.xy gives signed lateral distance.
+            local lateral = ( toTgt.x * miss.y - toTgt.y * miss.x ) / d
+            errY = errY + clamp( math.deg( math.atan2( lateral, d ) ), -15, 15 )
+        end
+
+        pid.iP = clamp( pid.iP + errP * dt, -pid.iClamp, pid.iClamp )
+        pid.iY = clamp( pid.iY + errY * dt, -pid.iClamp, pid.iClamp )
+
+        local dErrP, dErrY = 0, 0
+        if pid.lastMeasP ~= nil then
+            dErrP = -angleDeltaDeg( angPred.p, pid.lastMeasP ) / dt
+        end
+        pid.lastMeasP = angPred.p
+        if pid.lastAngPredY ~= nil then
+            dErrY = -angleDeltaDeg( angPred.y, pid.lastAngPredY ) / dt
+        end
+        pid.lastAngPredY = angPred.y
+
+        local cmdP = pid.kp_p * errP + pid.ki_p * pid.iP + pid.kd_p * dErrP
+        local cmdY = pid.kp_y * errY + pid.ki_y * pid.iY + pid.kd_y * dErrY
+
+        local errMag = math.max( math.abs( errP ), math.abs( errY ) )
+        local speedScale = clamp( errMag / 20, 0.25, 3.0 )
+        local maxRate = pid.outClamp * speedScale
+        cmdP = clamp( cmdP, -maxRate, maxRate )
+        cmdY = clamp( cmdY, -maxRate, maxRate )
+
+        return Angle( cur.p + cmdP * dt, cur.y + cmdY * dt, cur.r )
     end
 
     local function cleanupDriver( driver )
@@ -300,38 +381,35 @@ if SERVER then
         searchResults = find.sortByClosest( results, predictedHitPos )
     end 
 
-    local function toggleHitPosAim()
-        toggleHitPosAiming = toggleHitPosAiming == 1 and 0 or 1
+    local function toggleHitPosAim( value )
+        toggleHitPosAiming = value or ( toggleHitPosAiming == 1 and 0 ) or 1
         wire.ports["ToggleHitPosAiming"] = toggleHitPosAiming
+        if value == 1 and toggleDefendArea == 1 then
+            toggleDefendArea = 0
+            wire.ports["ToggleDefendArea"] = toggleDefendArea
+        end
         setTurretCol()
     end
 
-    local function toggleDefend()
-        toggleHitPosAim()
+    local function toggleDefend( value )
+        local temp = value or ( toggleDefendArea == 1 and 0 ) or 1
+        toggleHitPosAim( temp )
         if toggleHitPosAiming == 1 then
             newTargets()
         end
-        toggleDefendArea = toggleDefendArea == 1 and 0 or 1
+        toggleDefendArea = temp
         wire.ports["ToggleDefendArea"] = toggleDefendArea
         setTurretCol()
     end
 
+    local function setSpeed( value )
+        glideTurretSpeed = value or glideTurretSpeed
+        wire.ports["Speed"] = glideTurretSpeed
+    end
+
     local function adjustSpeed( positive )
-        local v = Shift == 1 and 2000 or 100 
-        if positive then
-            if SPEED + v <= 20000 then
-                SPEED = SPEED + v
-            else
-                SPEED = 20000
-            end
-        else
-            if SPEED >= v then
-                SPEED = SPEED - v
-            else
-                SPEED = 0
-            end
-        end
-        wire.ports["Speed"] = SPEED
+        local v = Shift == 1 and 2000 or 100
+        setSpeed( clamp( glideTurretSpeed + ( positive and v or -v ), 0, 20000 ) )
     end
 
     wire.adjustInputs( {"Turret", "TurretBody", "PodController", "Active", "Driver", "W", "A", "S", "D", "R", "Space", "Alt", "Shift", "PrevWeapon", "NextWeapon", "Mouse1", "Mouse2", "Light", "AimPos"}, {"entity", "entity", "entity", "number", "entity", "number", "number", "number", "number", "number", "number", "number", "number", "number", "number", "number", "number", "number", "vector"} )
@@ -357,7 +435,6 @@ if SERVER then
                 net.send( Driver, false )
                 enableHud( Driver, true )
                 setTurretCol()
-                CamAng = CamAng or turret:getAngles()
                 projParamTime = timer.curtime()
             elseif isValid( Driver ) then
                 cleanupDriver( Driver )
@@ -405,20 +482,43 @@ if SERVER then
                 local target = searchResults[1]
                 if isValid( target ) then
                     local targetPos = target:getPos()
+                    -- Enable arc + shell speed before PID so the same tick aims with correct arc/glideTurretSpeed.
+                    if timer.curtime() >= autoAimArcShotTime and autoAimArcPreferred ~= 1 then
+                        autoAimArcPreferred = 1
+                        local origin = turret:getPos()
+                        local r = targetPos - origin
+                        local d = Vector( r.x, r.y, 0 ):getLength()
+                        local h = r.z
+
+                        local speed = defaultSpeed
+                        local v2 = glideTurretGravity * ( h + math.sqrt( d * d + h * h ) )
+                        if v2 > 0 then
+                            speed = math.sqrt( v2 )
+                        end
+
+                        speed = clamp( speed, autoAimSpeedFloor, defaultSpeed )
+                        setSpeed( speed )
+                    end
                     local outang = PIDControl( targetPos )
                     turretBody:setAngles( outang )
-                    if timer.curtime() >= autoAimNoShotHoldTime then
-                        autoAimNoShotHoldTime = timer.curtime() + autoAimNoShotHoldDelay
+                    if timer.curtime() >= autoAimTargetSwitchTime then
+                        autoAimTargetSwitchTime = timer.curtime() + autoAimTargetSwitchDelay
+                        autoAimArcShotTime = timer.curtime() + autoAimArcShotDelay
+                        autoAimArcPreferred = 0
+                        setSpeed( defaultSpeed )
                         newTargets()
                     end
                     if timer.curtime() >= autoAimThinkTime and targetInRange then
                         autoAimThinkTime = timer.curtime() + autoAimThinkDelay
-                        autoAimNoShotHoldTime = timer.curtime() + autoAimNoShotHoldDelay
+                        autoAimTargetSwitchTime = timer.curtime() + autoAimTargetSwitchDelay
                         fire()
                     end
                 else
                     if timer.curtime() >= autoAimThinkTime then
                         autoAimThinkTime = timer.curtime() + autoAimThinkDelay
+                        autoAimArcShotTime = timer.curtime() + autoAimArcShotDelay
+                        autoAimArcPreferred = 0
+                        setSpeed( defaultSpeed )
                         newTargets()
                     end
                 end
@@ -430,12 +530,13 @@ if SERVER then
             else
                 if not isValid( Driver ) then return end
                 local eyes = Driver:getEyeAngles()
-                turretBody:setAngles( eyes )
+                -- Subtract the body→muzzle offset so the barrel points where the driver is looking.
+                turretBody:setAngles( turretOffset.p and Angle( eyes.p - turretOffset.p, eyes.y - turretOffset.y, eyes.r ) or eyes )
             end
             if not isValid( Driver ) then return end
-            camHolo:setPos( ( predictedHitPos - Angle( 0, Driver:getEyeAngles().y, 0 ):getForward() * CAMERA_Y_OFFSET ) + Vector( 0, 0, CAMERA_Z_OFFSET ) ) 
-            camHolo:setAngles( Angle( CAMERA_PITCH, Driver:getEyeAngles().y, 0 ) )
-            if camActive then
+            camHolo:setPos( ( predictedHitPos - Angle( 0, Driver:getEyeAngles().y, 0 ):getForward() * artyCamOffsetY ) + Vector( 0, 0, artyCamOffsetZ ) ) 
+            camHolo:setAngles( Angle( artyCamPitch, Driver:getEyeAngles().y, 0 ) )
+            if camActive and Driver:isHUDActive() then
                 Driver:setPVSPoint( 1, predictedHitPos )
             end
         end
@@ -443,11 +544,10 @@ if SERVER then
         if not isValid( turret ) then return end
         local t = timer.curtime()
         if t >= projParamTime + projParamDelay then
-            if outOfBudget( 0.8 ) then return end
             projParamTime = t
             updatePredictedHitPos()
             net.start( "ProjectileLauncherParams" )
-            net.writeFloat( SPEED )
+            net.writeFloat( glideTurretSpeed )
             net.writeAngle( turret:getAngles() )
             net.send( Driver, false )
         end
@@ -484,13 +584,13 @@ if CLIENT then
             local dir = launcherAngles:getUp()
             local pos = launcherPos + dir * 10
             local vel = dir * launcherSpeed
-            local g = Vector( 0, 0, -GRAVITY )
+            local g = Vector( 0, 0, -glideTurretGravity )
             local lastPos = pos
             local filter = buildClientTraceFilter()
             render.setColor( colGreen )
 
-            for i = 1, simSteps do
-                local t = i * simDt
+            for i = 1, predictionSteps do
+                local t = i * predictionDt
                 local nextPos = pos + vel * t + g * ( 0.5 * t * t )
                 local tr = trace.line( lastPos, nextPos, filter )
                 local drawTo = tr.Hit and tr.HitPos or nextPos
@@ -514,7 +614,7 @@ if CLIENT then
                 { text = "MWheel Up/Down = Adjust shell velocity (+/- 100)", color = colGreen },
                 { text = "Shift + MWheel Up/Down = Adj shell vel (+/- 2000)", color = colGreen },
                 { text = "R (Toggle) = Hit Position Aiming", color = colGreen },
-                { text = "F (Toggle) = Defend Area", color = colGreen },
+                { text = "F (Toggle) = Auto Aiming", color = colGreen },
             }
             local totalH = 0
             for _, row in ipairs( rows ) do
@@ -535,7 +635,7 @@ if CLIENT then
 
             local elevStr
             if isValid( trajTurret ) then
-                elevStr = string.format( "Elevation: %.1f deg", trajTurret:getAngles().p + 90 )
+                elevStr = string.format( "Elevation: %.1f deg", trajTurret:getAngles():getUp():getAngle().p )
             else
                 elevStr = "Elevation: __"
             end
