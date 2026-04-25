@@ -26,7 +26,7 @@
 -- Make sure the Pod Controller is connected to the chair and get in...
 
 -- edit these vars if you want ------------------------------------------------
-local defaultSpeed = 4000 -- default projectile
+local defaultSpeed = 4000
 
 -- RMB artillery cam settings
 local artyCamPitch = 80
@@ -137,7 +137,7 @@ if SERVER then
 
         for i = predSim.i, predictionSteps do
             local t = i * predictionDt
-            if outOfBudget( 0.5 ) then 
+            if outOfBudget( 0.5 ) then
                 predSim.i = i + 1
                 predSim.lastPos = lastPos
                 return
@@ -545,11 +545,16 @@ if SERVER then
         local t = timer.curtime()
         if t >= projParamTime + projParamDelay then
             projParamTime = t
-            updatePredictedHitPos()
-            net.start( "ProjectileLauncherParams" )
-            net.writeFloat( glideTurretSpeed )
-            net.writeAngle( turret:getAngles() )
-            net.send( Driver, false )
+            local simOk = pcall( updatePredictedHitPos )
+            if not simOk then
+                predSim.active = false
+                print( "[glide mortar] CPU spike during trajectory sim — skipped this tick" )
+            else
+                net.start( "ProjectileLauncherParams" )
+                net.writeFloat( glideTurretSpeed )
+                net.writeAngle( turret:getAngles() )
+                net.send( Driver, false )
+            end
         end
     end )
 
